@@ -55,7 +55,6 @@ export default function DashboardPage() {
           if (session) setActiveSession(session.id)
         }
 
-        // Toutes les requêtes en parallèle
         const [
           { data: sales },
           { data: customers },
@@ -81,7 +80,6 @@ export default function DashboardPage() {
         const paidItems = saleItems?.filter(i => paidSaleIds.includes(i.sale_id)) || []
         const grossMargin = paidItems.reduce((sum, i) => sum + (i.unit_price - i.unit_cost) * i.quantity, 0)
 
-        // Top produits
         const productTotals: Record<string, number> = {}
         paidItems.forEach(i => {
           productTotals[i.product_name] = (productTotals[i.product_name] || 0) + i.unit_price * i.quantity
@@ -89,7 +87,6 @@ export default function DashboardPage() {
         setTopProducts(Object.entries(productTotals).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, total]) => ({ name, total })))
         setTopCustomers(customers || [])
 
-        // Ventes par source
         const sourceCounts: Record<string, { count: number; ca: number }> = {}
         paidSales.forEach(s => {
           if (s.acquisition_source) {
@@ -100,7 +97,6 @@ export default function DashboardPage() {
         })
         setSalesBySource(Object.entries(sourceCounts).sort((a, b) => b[1].ca - a[1].ca).map(([source, data]) => ({ source, ...data })))
 
-        // Ventes par catégorie
         const catSales: Record<string, number> = {}
         paidItems.forEach(item => {
           const prod = productsWithCat?.find(p => p.id === item.product_id)
@@ -111,7 +107,6 @@ export default function DashboardPage() {
         })
         setSalesByCategory(Object.entries(catSales).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value })))
 
-        // Stock faible
         const lowStock = variants?.filter(v => v.stock_quantity <= v.low_stock_threshold).map(v => ({
           name: (v.product as any)?.name || '',
           variant: v.name,
@@ -166,6 +161,10 @@ export default function DashboardPage() {
   const formatFCFA = (amount: number) =>
     new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
 
+  const renderCustomLabel = ({ name, percent }: { name: string; percent?: number }) => {
+    return `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
+  }
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -191,7 +190,6 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          {/* Alerte stock faible */}
           {lowStockItems.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
               <div className="flex items-center gap-2 mb-2">
@@ -210,7 +208,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* KPIs */}
           <div className="grid grid-cols-4 gap-4 mb-6">
             <div className="bg-white rounded-xl p-4 shadow-sm">
               <div className="flex items-center justify-between mb-2">
@@ -243,7 +240,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Aperçu financier */}
           <div className="bg-white rounded-xl p-5 shadow-sm mb-6">
             <h2 className="text-base font-semibold text-stone-700 mb-4">Aperçu financier</h2>
             <div className="grid grid-cols-4 gap-4">
@@ -268,7 +264,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Actions rapides + Liens utiles */}
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="bg-white rounded-xl p-5 shadow-sm">
               <h2 className="text-base font-semibold text-stone-700 mb-3">Actions rapides</h2>
@@ -310,7 +305,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Top produits + Top clients */}
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="bg-white rounded-xl p-5 shadow-sm">
               <h2 className="text-base font-semibold text-stone-700 mb-3">Top 5 produits</h2>
@@ -350,7 +344,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Graphiques */}
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white rounded-xl p-5 shadow-sm">
               <h2 className="text-base font-semibold text-stone-700 mb-4">Ventes par Catégorie</h2>
@@ -359,7 +352,15 @@ export default function DashboardPage() {
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
-                    <Pie data={salesByCategory} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                    <Pie
+                      data={salesByCategory}
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      dataKey="value"
+                      label={renderCustomLabel}
+                      labelLine={false}
+                    >
                       {salesByCategory.map((_, index) => (
                         <Cell key={index} fill={COLORS[index % COLORS.length]} />
                       ))}
