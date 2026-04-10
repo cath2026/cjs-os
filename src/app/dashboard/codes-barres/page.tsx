@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Download, Search } from 'lucide-react'
+import { Download, Search, X, Printer } from 'lucide-react'
+import JsBarcode from 'jsbarcode'
 
 type BarcodeItem = {
   id: string
@@ -25,9 +26,10 @@ export default function CodesBarresPage() {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [showBarcode, setShowBarcode] = useState<BarcodeItem | null>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const printRef = useRef<SVGSVGElement>(null)
 
   const fetchBarcodes = async () => {
-    // Récupérer les variantes avec leurs barcodes directement
     const { data: variants } = await supabase
       .from('variants')
       .select('id, name, sale_price, barcode, product_id, product:products(id, name, category:categories(name, prefix))')
@@ -35,10 +37,7 @@ export default function CodesBarresPage() {
       .eq('is_active', true)
       .not('barcode', 'is', null)
 
-    if (!variants) {
-      setLoading(false)
-      return
-    }
+    if (!variants) { setLoading(false); return }
 
     const items: BarcodeItem[] = variants.map((v: any) => ({
       id: v.id,
@@ -57,6 +56,23 @@ export default function CodesBarresPage() {
   }
 
   useEffect(() => { fetchBarcodes() }, [])
+
+  useEffect(() => {
+    if (showBarcode && svgRef.current) {
+      try {
+        JsBarcode(svgRef.current, showBarcode.barcode_value, {
+          format: 'CODE128',
+          width: 2,
+          height: 60,
+          displayValue: true,
+          fontSize: 12,
+          margin: 10,
+        })
+      } catch (e) {
+        console.error('Barcode error', e)
+      }
+    }
+  }, [showBarcode])
 
   const categories = [...new Set(barcodes.map(b => b.category_code).filter(Boolean))]
 
@@ -87,6 +103,52 @@ export default function CodesBarresPage() {
     a.href = url
     a.download = `codes-barres-cjs.csv`
     a.click()
+  }
+
+  const handleDownloadPNG = () => {
+    if (!svgRef.current || !showBarcode) return
+    const svg = svgRef.current
+    const svgData = new XMLSerializer().serializeToString(svg)
+    const canvas = document.createElement('canvas')
+    canvas.width = svg.width.baseVal.value || 300
+    canvas.height = svg.height.baseVal.value || 150
+    const ctx = canvas.getContext('2d')
+    const img = new Image()
+    img.onload = () => {
+      ctx?.drawImage(img, 0, 0)
+      const a = document.createElement('a')
+      a.download = `barcode-${showBarcode.barcode_value}.png`
+      a.href = canvas.toDataURL('image/png')
+      a.click()
+    }
+    img.src = 'data:image/svg+xml;base64,' + btoa(svgData)
+  }
+
+  const handlePrint = () => {
+    if (!svgRef.current || !showBarcode) return
+    const svg = svgRef.current.outerHTML
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`
+      <html>
+        <head>
+          <title>Code-Barres — ${showBarcode.product_name}</title>
+          <style>
+            body { font-family: sans-serif; text-align: center; padding: 20px; }
+            .label { margin-bottom: 8px; font-weight: bold; font-size: 14px; }
+            .sub { color: #666; font-size: 12px; margin-bottom: 12px; }
+            @media print { button { display: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="label">${showBarcode.product_name}</div>
+          <div class="sub">${showBarcode.variant_name}</div>
+          ${svg}
+          <script>window.onload = () => { window.print(); window.close(); }</script>
+        </body>
+      </html>
+    `)
+    win.document.close()
   }
 
   const formatFCFA = (amount: number) =>
@@ -147,9 +209,7 @@ export default function CodesBarresPage() {
           <tbody className="divide-y divide-stone-100">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-stone-400">
-                  Aucun code-barres trouvé
-                </td>
+                <td colSpan={6} className="text-center py-12 text-stone-400">Aucun code-barres trouvé</td>
               </tr>
             ) : (
               filtered.map((barcode) => (
@@ -176,7 +236,7 @@ export default function CodesBarresPage() {
                       onClick={() => setShowBarcode(barcode)}
                       className="text-xs text-yellow-600 hover:text-yellow-700 font-medium border border-yellow-300 px-2 py-1 rounded-lg"
                     >
-                      Export
+                      Voir
                     </button>
                   </td>
                 </tr>
@@ -186,51 +246,47 @@ export default function CodesBarresPage() {
         </table>
       </div>
 
+      {/* Modal barcode */}
       {showBarcode && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-            <h2 className="text-lg font-semibold text-stone-800 mb-4 text-center">Code-Barres</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-stone-800">Code-Barres</h2>
+              <button onClick={() => setShowBarcode(null)}>
+                <X size={18} className="text-stone-400" />
+              </button>
+            </div>
 
-            <div className="border border-stone-200 rounded-xl p-4 mb-4">
-              <p className="text-center font-bold text-stone-800 mb-1">{showBarcode.product_name}</p>
-              <p className="text-center text-xs text-stone-400 mb-3">{showBarcode.variant_name}</p>
-
-              <div className="flex justify-center mb-2">
-                <div className="flex gap-px">
-                  {showBarcode.barcode_value.split('').map((char, i) => (
-                    <div
-                      key={i}
-                      className="bg-black"
-                      style={{
-                        width: `${(parseInt(char) || 1) + 1}px`,
-                        height: '60px',
-                      }}
-                    />
-                  ))}
-                </div>
+            <div className="border border-stone-200 rounded-xl p-4 mb-4 text-center">
+              <p className="font-bold text-stone-800 mb-1">{showBarcode.product_name}</p>
+              <p className="text-xs text-stone-400 mb-3">{showBarcode.variant_name}</p>
+              <div className="flex justify-center">
+                <svg ref={svgRef} />
               </div>
-
-              <p className="text-center font-mono text-sm text-stone-700 mt-2">
-                {showBarcode.barcode_value}
-              </p>
-
-              <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-stone-400 space-y-0.5">
-                <p>Produit ID: {showBarcode.product_id}</p>
-                <p>Variante ID: {showBarcode.variant_id}</p>
+              <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-stone-400 text-left space-y-0.5">
                 <p>Catégorie: {showBarcode.category_code}</p>
+                <p>Prix: {formatFCFA(showBarcode.sale_price)}</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <button
-                onClick={() => window.print()}
-                className="border border-stone-300 hover:bg-stone-50 text-stone-600 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                onClick={handlePrint}
+                className="flex items-center justify-center gap-1 border border-stone-300 hover:bg-stone-50 text-stone-600 py-2 rounded-lg text-xs font-medium transition-colors"
               >
+                <Printer size={12} />
                 Imprimer
               </button>
               <button
+                onClick={handleDownloadPNG}
+                className="flex items-center justify-center gap-1 border border-yellow-300 hover:bg-yellow-50 text-yellow-700 py-2 rounded-lg text-xs font-medium transition-colors"
+              >
+                <Download size={12} />
+                PNG
+              </button>
+              <button
                 onClick={() => navigator.clipboard.writeText(showBarcode.barcode_value)}
-                className="bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+                className="bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-xs font-medium transition-colors"
               >
                 Copier
               </button>
