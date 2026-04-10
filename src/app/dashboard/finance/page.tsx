@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Pencil, X, Lock } from 'lucide-react'
+import { Pencil, X, Lock, FileDown } from 'lucide-react'
 
 type Cycle = {
   id: string
@@ -66,7 +66,6 @@ export default function FinancePage() {
   })
 
   const fetchData = async () => {
-    // Cycle actif
     const { data: cycle } = await supabase
       .from('finance_cycles')
       .select('*')
@@ -74,7 +73,6 @@ export default function FinancePage() {
       .eq('is_active', true)
       .single()
 
-    // Cycles clôturés
     const { data: closed } = await supabase
       .from('finance_cycles')
       .select('*')
@@ -83,7 +81,6 @@ export default function FinancePage() {
       .order('closed_at', { ascending: false })
     setClosedCycles(closed || [])
 
-    // Règles de répartition
     const { data: dist } = await supabase
       .from('distribution_rules')
       .select('*')
@@ -101,12 +98,8 @@ export default function FinancePage() {
       })
     }
 
-    if (!cycle) {
-      setLoading(false)
-      return
-    }
+    if (!cycle) { setLoading(false); return }
 
-    // Charges fixes du cycle
     const { data: costsData } = await supabase
       .from('fixed_costs')
       .select('*')
@@ -126,7 +119,6 @@ export default function FinancePage() {
       })
     }
 
-    // Ventes payées du cycle
     const { data: sales } = await supabase
       .from('sales')
       .select('*, sale_items(*)')
@@ -143,7 +135,6 @@ export default function FinancePage() {
     const totalFixedCosts = costsData?.total || 0
     const netMargin = grossMargin - totalFixedCosts
 
-    // Mise à jour cycle
     await supabase
       .from('finance_cycles')
       .update({
@@ -235,6 +226,45 @@ export default function FinancePage() {
     fetchData()
   }
 
+  const handleExportPDF = async (cycle: Cycle) => {
+    const { jsPDF } = await import('jspdf')
+    const doc = new jsPDF()
+
+    doc.setFontSize(18)
+    doc.text('CATH JEWELRY STORE', 105, 20, { align: 'center' })
+    doc.setFontSize(12)
+    doc.text('Résumé de cycle financier', 105, 30, { align: 'center' })
+
+    doc.setFontSize(10)
+    doc.text(`Période : ${new Date(cycle.started_at).toLocaleDateString('fr-FR')} → ${cycle.closed_at ? new Date(cycle.closed_at).toLocaleDateString('fr-FR') : ''}`, 20, 45)
+    doc.text(`Ventes : ${cycle.total_sales}`, 20, 55)
+
+    doc.setFontSize(12)
+    doc.text('Résultats financiers', 20, 70)
+    doc.setFontSize(10)
+    doc.text(`CA Brut : ${formatFCFA(cycle.gross_revenue)}`, 20, 80)
+    doc.text(`CA Net : ${formatFCFA(cycle.net_revenue)}`, 20, 90)
+    doc.text(`Marge Brute : ${formatFCFA(cycle.gross_margin)}`, 20, 100)
+    doc.text(`Marge Nette : ${formatFCFA(cycle.net_margin)}`, 20, 110)
+
+    if (distribution) {
+      doc.setFontSize(12)
+      doc.text('Répartition automatique', 20, 125)
+      doc.setFontSize(10)
+      const netM = cycle.net_margin > 0 ? cycle.net_margin : 0
+      doc.text(`Réinvestissement (${distribution.reinvestment_pct}%) : ${formatFCFA(netM * distribution.reinvestment_pct / 100)}`, 20, 135)
+      doc.text(`Marketing (${distribution.marketing_pct}%) : ${formatFCFA(netM * distribution.marketing_pct / 100)}`, 20, 145)
+      doc.text(`Épargne (${distribution.savings_pct}%) : ${formatFCFA(netM * distribution.savings_pct / 100)}`, 20, 155)
+      doc.text(`Propriétaire (${distribution.owner_pct}%) : ${formatFCFA(netM * distribution.owner_pct / 100)}`, 20, 165)
+      doc.text(`Dîme (${distribution.tithe_pct}%) : ${formatFCFA(netM * distribution.tithe_pct / 100)}`, 20, 175)
+      doc.text(`Imprévu (${distribution.unexpected_pct}%) : ${formatFCFA(netM * distribution.unexpected_pct / 100)}`, 20, 185)
+    }
+
+    doc.setFontSize(8)
+    doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} — CJS OS`, 105, 280, { align: 'center' })
+    doc.save(`cycle-cjs-${new Date(cycle.started_at).toLocaleDateString('fr-FR').replace(/\//g, '-')}.pdf`)
+  }
+
   const formatFCFA = (amount: number) =>
     new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
 
@@ -263,15 +293,11 @@ export default function FinancePage() {
       {activeCycle && (
         <div className="bg-white rounded-xl p-5 shadow-sm mb-4">
           <div className="mb-4">
-            <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-medium">
-              Cycle Actuel
-            </span>
+            <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-medium">Cycle Actuel</span>
             <p className="font-semibold text-stone-800 mt-1">
               Depuis le {new Date(activeCycle.started_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
             </p>
-            <p className="text-xs text-stone-400">
-              Ventes du cycle : {activeCycle.total_sales}
-            </p>
+            <p className="text-xs text-stone-400">Ventes du cycle : {activeCycle.total_sales}</p>
           </div>
           <div className="grid grid-cols-4 gap-4">
             <div>
@@ -281,9 +307,7 @@ export default function FinancePage() {
             <div>
               <p className="text-xs text-stone-400 mb-1">CA Net</p>
               <p className="text-xl font-bold text-stone-800">{formatFCFA(activeCycle.net_revenue)}</p>
-              <p className="text-xs text-red-400">
-                Réductions: {formatFCFA(activeCycle.gross_revenue - activeCycle.net_revenue)}
-              </p>
+              <p className="text-xs text-red-400">Réductions: {formatFCFA(activeCycle.gross_revenue - activeCycle.net_revenue)}</p>
             </div>
             <div>
               <p className="text-xs text-stone-400 mb-1">Marge Brute</p>
@@ -303,10 +327,7 @@ export default function FinancePage() {
       <div className="bg-white rounded-xl p-5 shadow-sm mb-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-stone-700">Charges Fixes</h2>
-          <button
-            onClick={() => setShowCostsModal(true)}
-            className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 font-medium"
-          >
+          <button onClick={() => setShowCostsModal(true)} className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 font-medium">
             <Pencil size={12} /> Modifier
           </button>
         </div>
@@ -336,10 +357,7 @@ export default function FinancePage() {
         <div className="bg-white rounded-xl p-5 shadow-sm mb-4">
           <div className="flex items-center justify-between mb-2">
             <h2 className="font-semibold text-stone-700">Répartition Automatique</h2>
-            <button
-              onClick={() => setShowDistribModal(true)}
-              className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 font-medium"
-            >
+            <button onClick={() => setShowDistribModal(true)} className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 font-medium">
               <Pencil size={12} /> Modifier %
             </button>
           </div>
@@ -360,9 +378,7 @@ export default function FinancePage() {
             ].map((item) => (
               <div key={item.label} className="bg-stone-50 rounded-lg p-3">
                 <p className="text-xs text-stone-400">{item.label} ({item.pct}%)</p>
-                <p className={`text-lg font-bold ${item.color}`}>
-                  {formatFCFA(distribAmount(item.pct))}
-                </p>
+                <p className={`text-lg font-bold ${item.color}`}>{formatFCFA(distribAmount(item.pct))}</p>
               </div>
             ))}
           </div>
@@ -372,9 +388,7 @@ export default function FinancePage() {
       {/* Cycles clôturés */}
       {closedCycles.length > 0 && (
         <div className="bg-white rounded-xl p-5 shadow-sm">
-          <h2 className="font-semibold text-stone-700 mb-4">
-            Cycles Clôturés ({closedCycles.length})
-          </h2>
+          <h2 className="font-semibold text-stone-700 mb-4">Cycles Clôturés ({closedCycles.length})</h2>
           <div className="space-y-3">
             {closedCycles.map((cycle) => (
               <div key={cycle.id} className="border border-stone-100 rounded-xl p-4">
@@ -382,7 +396,16 @@ export default function FinancePage() {
                   <p className="text-sm font-medium text-stone-700">
                     {new Date(cycle.started_at).toLocaleDateString('fr-FR')} → {cycle.closed_at ? new Date(cycle.closed_at).toLocaleDateString('fr-FR') : ''}
                   </p>
-                  <span className="text-xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">Clôturé</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">Clôturé</span>
+                    <button
+                      onClick={() => handleExportPDF(cycle)}
+                      className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 border border-yellow-300 px-2 py-0.5 rounded-lg transition-colors"
+                    >
+                      <FileDown size={12} />
+                      PDF
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-4 gap-4">
                   <div>
@@ -416,9 +439,7 @@ export default function FinancePage() {
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Modifier les charges fixes</h2>
-              <button onClick={() => setShowCostsModal(false)}>
-                <X size={18} className="text-stone-400" />
-              </button>
+              <button onClick={() => setShowCostsModal(false)}><X size={18} className="text-stone-400" /></button>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {[
@@ -447,16 +468,10 @@ export default function FinancePage() {
               </p>
             </div>
             <div className="flex gap-3 mt-4">
-              <button
-                onClick={handleSaveCosts}
-                disabled={saving}
-                className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-              >
+              <button onClick={handleSaveCosts} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
                 {saving ? 'Enregistrement...' : 'Enregistrer'}
               </button>
-              <button onClick={() => setShowCostsModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
-                Annuler
-              </button>
+              <button onClick={() => setShowCostsModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
             </div>
           </div>
         </div>
@@ -468,9 +483,7 @@ export default function FinancePage() {
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Modifier les pourcentages</h2>
-              <button onClick={() => { setShowDistribModal(false); setError('') }}>
-                <X size={18} className="text-stone-400" />
-              </button>
+              <button onClick={() => { setShowDistribModal(false); setError('') }}><X size={18} className="text-stone-400" /></button>
             </div>
             <div className="space-y-3">
               {[
@@ -500,16 +513,10 @@ export default function FinancePage() {
             </div>
             {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
             <div className="flex gap-3 mt-4">
-              <button
-                onClick={handleSaveDistrib}
-                disabled={saving}
-                className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-              >
+              <button onClick={handleSaveDistrib} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
                 {saving ? 'Enregistrement...' : 'Enregistrer'}
               </button>
-              <button onClick={() => { setShowDistribModal(false); setError('') }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
-                Annuler
-              </button>
+              <button onClick={() => { setShowDistribModal(false); setError('') }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
             </div>
           </div>
         </div>
@@ -521,13 +528,9 @@ export default function FinancePage() {
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Clôturer le cycle</h2>
-              <button onClick={() => setShowCloseModal(false)}>
-                <X size={18} className="text-stone-400" />
-              </button>
+              <button onClick={() => setShowCloseModal(false)}><X size={18} className="text-stone-400" /></button>
             </div>
-            <p className="text-sm text-stone-500 mb-4">
-              Cette action clôture le cycle actuel et en crée un nouveau. Les compteurs repartent à zéro.
-            </p>
+            <p className="text-sm text-stone-500 mb-4">Cette action clôture le cycle actuel et en crée un nouveau.</p>
             <div className="bg-stone-50 rounded-lg p-4 mb-4 space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-stone-500">CA Brut</span>
@@ -541,16 +544,10 @@ export default function FinancePage() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button
-                onClick={handleCloseCycle}
-                disabled={saving}
-                className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-              >
+              <button onClick={handleCloseCycle} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
                 {saving ? 'Clôture...' : 'Confirmer la clôture'}
               </button>
-              <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
-                Annuler
-              </button>
+              <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
             </div>
           </div>
         </div>
