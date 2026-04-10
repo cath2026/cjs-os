@@ -64,12 +64,32 @@ export default function ProduitsPage() {
     setVariants(variants.filter((_, i) => i !== index))
   }
 
-  const updateStock = async (variantId: string, newQty: number) => {
+  const updateStock = async (variantId: string, newQty: number, currentQty: number) => {
     if (newQty < 0) return
+
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: empData } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('auth_user_id', user?.id)
+      .single()
+
     await supabase
       .from('variants')
       .update({ stock_quantity: newQty, updated_at: new Date().toISOString() })
       .eq('id', variantId)
+
+    await supabase.from('stock_movements').insert({
+      shop_id: SHOP_ID,
+      variant_id: variantId,
+      employee_id: empData?.id,
+      movement_type: 'adjustment',
+      quantity_change: newQty - currentQty,
+      quantity_before: currentQty,
+      quantity_after: newQty,
+      notes: 'Ajustement manuel',
+    })
+
     fetchProducts()
   }
 
@@ -211,12 +231,12 @@ export default function ProduitsPage() {
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => updateStock(v.id, v.stock_quantity - 1)}
+                          onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity)}
                           className="w-5 h-5 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-stone-600 font-bold"
                         >-</button>
                         <span className="text-stone-700 font-medium w-6 text-center">{v.stock_quantity}</span>
                         <button
-                          onClick={() => updateStock(v.id, v.stock_quantity + 1)}
+                          onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity)}
                           className="w-5 h-5 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-stone-600 font-bold"
                         >+</button>
                         <span className="text-stone-400 ml-1">en stock</span>
@@ -275,10 +295,7 @@ export default function ProduitsPage() {
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold text-stone-700">Variantes</h3>
-                <button
-                  onClick={addVariant}
-                  className="text-xs text-yellow-600 hover:text-yellow-700 font-medium"
-                >
+                <button onClick={addVariant} className="text-xs text-yellow-600 hover:text-yellow-700 font-medium">
                   + Ajouter une variante
                 </button>
               </div>
