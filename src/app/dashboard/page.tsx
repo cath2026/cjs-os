@@ -12,6 +12,12 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 const COLORS = ['#d97706', '#b45309', '#92400e', '#78350f', '#fbbf24', '#f59e0b', '#451a03']
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const renderCustomLabel = (props: any) => {
+  const { name, percent } = props
+  return `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
+}
+
 export default function DashboardPage() {
   const supabase = createClient()
   const router = useRouter()
@@ -160,10 +166,6 @@ export default function DashboardPage() {
 
   const formatFCFA = (amount: number) =>
     new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
-
-  const renderCustomLabel = ({ name, percent }: { name: string; percent?: number }) => {
-    return `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
-  }
 
   return (
     <div className="p-6">
