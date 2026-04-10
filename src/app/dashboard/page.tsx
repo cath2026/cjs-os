@@ -41,6 +41,7 @@ export default function DashboardPage() {
           .select('id, full_name')
           .eq('auth_user_id', user.id)
           .single()
+
         if (emp) {
           setEmployeeName(emp.full_name)
           setEmployeeId(emp.id)
@@ -54,43 +55,24 @@ export default function DashboardPage() {
           if (session) setActiveSession(session.id)
         }
 
-        const { data: sales } = await supabase
-          .from('sales')
-          .select('id, status, total, subtotal, acquisition_source')
-          .eq('shop_id', SHOP_ID)
-
-        const { data: customers } = await supabase
-          .from('customers')
-          .select('id, full_name, total_spent')
-          .eq('shop_id', SHOP_ID)
-          .order('total_spent', { ascending: false })
-          .limit(5)
-
-        const { data: products } = await supabase
-          .from('products')
-          .select('id')
-          .eq('shop_id', SHOP_ID)
-          .eq('is_active', true)
-
-        const { data: saleItems } = await supabase
-          .from('sale_items')
-          .select('product_name, quantity, unit_price, unit_cost, sale_id, product_id')
-
-        const { data: variants } = await supabase
-          .from('variants')
-          .select('id, name, stock_quantity, low_stock_threshold, product:products(name)')
-          .eq('shop_id', SHOP_ID)
-          .eq('is_active', true)
-
-        const { data: categories } = await supabase
-          .from('categories')
-          .select('id, name')
-          .eq('shop_id', SHOP_ID)
-
-        const { data: productsWithCat } = await supabase
-          .from('products')
-          .select('id, category_id')
-          .eq('shop_id', SHOP_ID)
+        // Toutes les requêtes en parallèle
+        const [
+          { data: sales },
+          { data: customers },
+          { data: products },
+          { data: saleItems },
+          { data: variants },
+          { data: categories },
+          { data: productsWithCat },
+        ] = await Promise.all([
+          supabase.from('sales').select('id, status, total, subtotal, acquisition_source').eq('shop_id', SHOP_ID),
+          supabase.from('customers').select('id, full_name, total_spent').eq('shop_id', SHOP_ID).order('total_spent', { ascending: false }).limit(5),
+          supabase.from('products').select('id').eq('shop_id', SHOP_ID).eq('is_active', true),
+          supabase.from('sale_items').select('product_name, quantity, unit_price, unit_cost, sale_id, product_id'),
+          supabase.from('variants').select('id, name, stock_quantity, low_stock_threshold, product:products(name)').eq('shop_id', SHOP_ID).eq('is_active', true),
+          supabase.from('categories').select('id, name').eq('shop_id', SHOP_ID),
+          supabase.from('products').select('id, category_id').eq('shop_id', SHOP_ID),
+        ])
 
         const paidSales = sales?.filter(s => s.status === 'paid') || []
         const grossRevenue = paidSales.reduce((sum, s) => sum + s.subtotal, 0)
@@ -186,7 +168,6 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-stone-800">Dashboard</h1>
@@ -308,7 +289,6 @@ export default function DashboardPage() {
                 </button>
               </div>
             </div>
-
             <div className="bg-white rounded-xl p-5 shadow-sm">
               <h2 className="text-base font-semibold text-stone-700 mb-3">Liens utiles</h2>
               <div className="space-y-2">
@@ -350,7 +330,6 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-
             <div className="bg-white rounded-xl p-5 shadow-sm">
               <h2 className="text-base font-semibold text-stone-700 mb-3">Top 5 clients</h2>
               {topCustomers.length === 0 ? (
@@ -390,7 +369,6 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               )}
             </div>
-
             <div className="bg-white rounded-xl p-5 shadow-sm">
               <h2 className="text-base font-semibold text-stone-700 mb-4">Ventes par Source</h2>
               {salesBySource.length === 0 ? (
