@@ -367,7 +367,7 @@ export default function DashboardPage() {
                         <Cell key={index} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value: number) => formatFCFA(value)} />
+                    <Tooltip formatter={(value: any) => formatFCFA(value)} />
                   </PieChart>
                 </ResponsiveContainer>
               )}
@@ -381,7 +381,7 @@ export default function DashboardPage() {
                   <BarChart data={salesBySource} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                     <XAxis dataKey="source" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(value: number) => formatFCFA(value)} />
+                    <Tooltip formatter={(value: any) => formatFCFA(value)} />
                     <Bar dataKey="ca" name="CA" fill="#d97706" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="count" name="Ventes" fill="#92400e" radius={[4, 4, 0, 0]} />
                   </BarChart>
