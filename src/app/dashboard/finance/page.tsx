@@ -2,553 +2,714 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Pencil, X, Lock, FileDown } from 'lucide-react'
+import { useParams, useRouter } from 'next/navigation'
+import { ArrowLeft, Printer, Send, X, Plus, Trash2 } from 'lucide-react'
 
-type Cycle = {
+type Sale = {
   id: string
-  started_at: string
-  closed_at?: string
-  is_active: boolean
-  total_sales: number
-  gross_revenue: number
-  net_revenue: number
-  gross_margin: number
-  net_margin: number
-  fixed_costs_total: number
-}
-
-type FixedCosts = {
-  id: string
-  salary: number
-  bonus: number
-  commission: number
-  invoices: number
-  internet: number
-  unexpected: number
-  other: number
+  status: string
   total: number
+  subtotal: number
+  discount_amount: number
+  discount_type?: string
+  discount_value: number
+  customer_name?: string
+  acquisition_source?: string
+  payment_method?: string
+  notes?: string
+  paid_at?: string
+  created_at: string
+  customer?: { id: string; full_name: string; phone?: string }
+  employee?: { full_name: string }
+  sale_items: {
+    id: string
+    product_name: string
+    variant_name?: string
+    quantity: number
+    unit_price: number
+    unit_cost: number
+    total_price: number
+    variant_id?: string
+    product_id?: string
+  }[]
 }
 
-type DistributionRules = {
+type Variant = {
   id: string
-  reinvestment_pct: number
-  marketing_pct: number
-  savings_pct: number
-  owner_pct: number
-  tithe_pct: number
-  unexpected_pct: number
+  name: string
+  sale_price: number
+  cost_price: number
+  stock_quantity: number
+  barcode?: string
+  product: { id: string; name: string }
 }
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
-export default function FinancePage() {
+export default function VenteDetailPage() {
   const supabase = createClient()
-  const [activeCycle, setActiveCycle] = useState<Cycle | null>(null)
-  const [closedCycles, setClosedCycles] = useState<Cycle[]>([])
-  const [fixedCosts, setFixedCosts] = useState<FixedCosts | null>(null)
-  const [distribution, setDistribution] = useState<DistributionRules | null>(null)
+  const router = useRouter()
+  const params = useParams()
+  const id = params.id as string
+
+  const [sale, setSale] = useState<Sale | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showCostsModal, setShowCostsModal] = useState(false)
-  const [showDistribModal, setShowDistribModal] = useState(false)
-  const [showCloseModal, setShowCloseModal] = useState(false)
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [showReceiptModal, setShowReceiptModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [allVariants, setAllVariants] = useState<Variant[]>([])
+  const [showProductSearch, setShowProductSearch] = useState(false)
+  const [productSearch, setProductSearch] = useState('')
 
-  const [costsForm, setCostsForm] = useState({
-    salary: 0, bonus: 0, commission: 0,
-    invoices: 0, internet: 0, unexpected: 0, other: 0
-  })
+  const [editCart, setEditCart] = useState<Sale['sale_items']>([])
+  const [editCustomerName, setEditCustomerName] = useState('')
+  const [editSource, setEditSource] = useState('')
+  const [editPayment, setEditPayment] = useState('')
+  const [editDiscountType, setEditDiscountType] = useState('')
+  const [editDiscountValue, setEditDiscountValue] = useState(0)
+  const [editNotes, setEditNotes] = useState('')
+  const [editReason, setEditReason] = useState('')
 
-  const [distribForm, setDistribForm] = useState({
-    reinvestment_pct: 30, marketing_pct: 30,
-    savings_pct: 15, owner_pct: 5,
-    tithe_pct: 10, unexpected_pct: 10
-  })
-
-  const fetchData = async () => {
-    const { data: cycle } = await supabase
-      .from('finance_cycles')
-      .select('*')
-      .eq('shop_id', SHOP_ID)
-      .eq('is_active', true)
-      .single()
-
-    const { data: closed } = await supabase
-      .from('finance_cycles')
-      .select('*')
-      .eq('shop_id', SHOP_ID)
-      .eq('is_active', false)
-      .order('closed_at', { ascending: false })
-    setClosedCycles(closed || [])
-
-    const { data: dist } = await supabase
-      .from('distribution_rules')
-      .select('*')
-      .eq('shop_id', SHOP_ID)
-      .single()
-    if (dist) {
-      setDistribution(dist)
-      setDistribForm({
-        reinvestment_pct: dist.reinvestment_pct,
-        marketing_pct: dist.marketing_pct,
-        savings_pct: dist.savings_pct,
-        owner_pct: dist.owner_pct,
-        tithe_pct: dist.tithe_pct,
-        unexpected_pct: dist.unexpected_pct,
-      })
-    }
-
-    if (!cycle) { setLoading(false); return }
-
-    const { data: costsData } = await supabase
-      .from('fixed_costs')
-      .select('*')
-      .eq('cycle_id', cycle.id)
-      .single()
-
-    if (costsData) {
-      setFixedCosts(costsData)
-      setCostsForm({
-        salary: costsData.salary,
-        bonus: costsData.bonus,
-        commission: costsData.commission,
-        invoices: costsData.invoices,
-        internet: costsData.internet,
-        unexpected: costsData.unexpected,
-        other: costsData.other,
-      })
-    }
-
-    const { data: sales } = await supabase
+  const fetchSale = async () => {
+    const { data } = await supabase
       .from('sales')
-      .select('*, sale_items(*)')
-      .eq('shop_id', SHOP_ID)
-      .eq('status', 'paid')
-      .gte('created_at', cycle.started_at)
-
-    const grossRevenue = sales?.reduce((sum, s) => sum + s.subtotal, 0) || 0
-    const netRevenue = sales?.reduce((sum, s) => sum + s.total, 0) || 0
-    const allItems = sales?.flatMap((s: any) => s.sale_items) || []
-    const grossMargin = allItems.reduce(
-      (sum: number, i: any) => sum + (i.unit_price - i.unit_cost) * i.quantity, 0
-    )
-    const totalFixedCosts = costsData?.total || 0
-    const netMargin = grossMargin - totalFixedCosts
-
-    await supabase
-      .from('finance_cycles')
-      .update({
-        total_sales: sales?.length || 0,
-        gross_revenue: grossRevenue,
-        net_revenue: netRevenue,
-        gross_margin: grossMargin,
-        net_margin: netMargin,
-        fixed_costs_total: totalFixedCosts,
-      })
-      .eq('id', cycle.id)
-
-    setActiveCycle({
-      ...cycle,
-      total_sales: sales?.length || 0,
-      gross_revenue: grossRevenue,
-      net_revenue: netRevenue,
-      gross_margin: grossMargin,
-      net_margin: netMargin,
-      fixed_costs_total: totalFixedCosts,
-    })
-
+      .select('*, customer:customers(id, full_name, phone), employee:employees(full_name), sale_items(*)')
+      .eq('id', id)
+      .single()
+    setSale(data)
     setLoading(false)
   }
 
-  useEffect(() => { fetchData() }, [])
-
-  const handleSaveCosts = async () => {
-    if (!activeCycle) return
-    setSaving(true)
-
-    if (fixedCosts) {
-      await supabase
-        .from('fixed_costs')
-        .update({ ...costsForm, updated_at: new Date().toISOString() })
-        .eq('id', fixedCosts.id)
-    } else {
-      await supabase
-        .from('fixed_costs')
-        .insert({ shop_id: SHOP_ID, cycle_id: activeCycle.id, ...costsForm })
-    }
-
-    setSaving(false)
-    setShowCostsModal(false)
-    fetchData()
+  const fetchVariants = async () => {
+    const { data } = await supabase
+      .from('variants')
+      .select('*, product:products(id, name)')
+      .eq('shop_id', SHOP_ID)
+      .eq('is_active', true)
+    setAllVariants(data || [])
   }
 
-  const handleSaveDistrib = async () => {
-    const total = Object.values(distribForm).reduce((sum, v) => sum + v, 0)
-    if (total !== 100) {
-      setError(`Total doit être 100% (actuellement ${total}%)`)
+  useEffect(() => {
+    fetchSale()
+    fetchVariants()
+  }, [id])
+
+  const canEdit = () => {
+    if (!sale || sale.status !== 'paid' || !sale.paid_at) return false
+    const paidAt = new Date(sale.paid_at)
+    const now = new Date()
+    const diffHours = (now.getTime() - paidAt.getTime()) / (1000 * 60 * 60)
+    return diffHours <= 48
+  }
+
+  const openEditModal = () => {
+    if (!sale) return
+    setEditCart(sale.sale_items.map(i => ({ ...i })))
+    setEditCustomerName(sale.customer?.full_name || sale.customer_name || '')
+    setEditSource(sale.acquisition_source || '')
+    setEditPayment(sale.payment_method || '')
+    setEditDiscountType(sale.discount_type || '')
+    setEditDiscountValue(sale.discount_value || 0)
+    setEditNotes(sale.notes || '')
+    setEditReason('')
+    setShowEditModal(true)
+  }
+
+  const addToEditCart = (variant: Variant) => {
+    const existing = editCart.find(i => i.variant_id === variant.id)
+    if (existing) {
+      setEditCart(editCart.map(i =>
+        i.variant_id === variant.id ? { ...i, quantity: i.quantity + 1 } : i
+      ))
+    } else {
+      setEditCart([...editCart, {
+        id: '',
+        variant_id: variant.id,
+        product_id: variant.product.id,
+        product_name: variant.product.name,
+        variant_name: variant.name,
+        quantity: 1,
+        unit_price: variant.sale_price,
+        unit_cost: variant.cost_price,
+        total_price: variant.sale_price,
+      }])
+    }
+    setShowProductSearch(false)
+    setProductSearch('')
+  }
+
+  const updateEditQty = (variant_id: string, qty: number) => {
+    if (qty <= 0) {
+      setEditCart(editCart.filter(i => i.variant_id !== variant_id))
+    } else {
+      setEditCart(editCart.map(i => i.variant_id === variant_id ? { ...i, quantity: qty } : i))
+    }
+  }
+
+  const editSubtotal = editCart.reduce((sum, i) => sum + i.unit_price * i.quantity, 0)
+  const editDiscountAmount = editDiscountType === 'fixed'
+    ? editDiscountValue
+    : editDiscountType === 'percent'
+    ? (editSubtotal * editDiscountValue) / 100
+    : 0
+  const editTotal = editSubtotal - editDiscountAmount
+
+  const handleSaveEdit = async () => {
+    if (!editReason.trim()) {
+      setError('Le motif de modification est obligatoire')
+      return
+    }
+    if (editCart.length === 0) {
+      setError('La vente doit contenir au moins un article')
       return
     }
     setSaving(true)
     setError('')
 
     await supabase
-      .from('distribution_rules')
-      .update({ ...distribForm, updated_at: new Date().toISOString() })
-      .eq('id', distribution?.id)
+      .from('sales')
+      .update({
+        customer_name: editCustomerName || null,
+        acquisition_source: editSource || null,
+        payment_method: editPayment || null,
+        subtotal: editSubtotal,
+        discount_type: editDiscountType || null,
+        discount_value: editDiscountValue,
+        discount_amount: editDiscountAmount,
+        total: editTotal,
+        notes: `${editNotes ? editNotes + ' | ' : ''}MODIFIÉ — Motif: ${editReason}`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
 
-    setSaving(false)
-    setShowDistribModal(false)
-    fetchData()
-  }
+    await supabase.from('sale_items').delete().eq('sale_id', id)
 
-  const handleCloseCycle = async () => {
-    if (!activeCycle) return
-    setSaving(true)
-
-    await supabase
-      .from('finance_cycles')
-      .update({ is_active: false, closed_at: new Date().toISOString() })
-      .eq('id', activeCycle.id)
-
-    await supabase
-      .from('finance_cycles')
-      .insert({ shop_id: SHOP_ID, started_at: new Date().toISOString(), is_active: true })
+    await supabase.from('sale_items').insert(
+      editCart.map(item => ({
+        sale_id: id,
+        variant_id: item.variant_id || null,
+        product_id: item.product_id || null,
+        product_name: item.product_name,
+        variant_name: item.variant_name || null,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        unit_cost: item.unit_cost,
+        total_price: item.unit_price * item.quantity,
+      }))
+    )
 
     await supabase.from('logs').insert({
       shop_id: SHOP_ID,
-      action: 'Clôture cycle finance',
-      module: 'finance',
-      reference_id: activeCycle.id,
+      action: `Vente modifiée sous 48h — Motif: ${editReason}`,
+      module: 'ventes',
+      reference_id: id,
     })
 
     setSaving(false)
-    setShowCloseModal(false)
-    fetchData()
+    setShowEditModal(false)
+    fetchSale()
   }
 
-  const handleExportPDF = async (cycle: Cycle) => {
-    const { jsPDF } = await import('jspdf')
-    const doc = new jsPDF()
+  const handleStatusChange = async (newStatus: string) => {
+    if (!sale) return
+    setSaving(true)
 
-    doc.setFontSize(18)
-    doc.text('CATH JEWELRY STORE', 105, 20, { align: 'center' })
-    doc.setFontSize(12)
-    doc.text('Résumé de cycle financier', 105, 30, { align: 'center' })
+    await supabase
+      .from('sales')
+      .update({
+        status: newStatus,
+        paid_at: newStatus === 'paid' ? new Date().toISOString() : sale.paid_at,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sale.id)
 
-    doc.setFontSize(10)
-    doc.text(`Période : ${new Date(cycle.started_at).toLocaleDateString('fr-FR')} → ${cycle.closed_at ? new Date(cycle.closed_at).toLocaleDateString('fr-FR') : ''}`, 20, 45)
-    doc.text(`Ventes : ${cycle.total_sales}`, 20, 55)
+    await supabase.from('logs').insert({
+      shop_id: SHOP_ID,
+      action: `Changement statut vente: ${sale.status} → ${newStatus}`,
+      module: 'ventes',
+      reference_id: sale.id,
+    })
 
-    doc.setFontSize(12)
-    doc.text('Résultats financiers', 20, 70)
-    doc.setFontSize(10)
-    doc.text(`CA Brut : ${formatFCFA(cycle.gross_revenue)}`, 20, 80)
-    doc.text(`CA Net : ${formatFCFA(cycle.net_revenue)}`, 20, 90)
-    doc.text(`Marge Brute : ${formatFCFA(cycle.gross_margin)}`, 20, 100)
-    doc.text(`Marge Nette : ${formatFCFA(cycle.net_margin)}`, 20, 110)
+    setSaving(false)
+    fetchSale()
 
-    if (distribution) {
-      doc.setFontSize(12)
-      doc.text('Répartition automatique', 20, 125)
-      doc.setFontSize(10)
-      const netM = cycle.net_margin > 0 ? cycle.net_margin : 0
-      doc.text(`Réinvestissement (${distribution.reinvestment_pct}%) : ${formatFCFA(netM * distribution.reinvestment_pct / 100)}`, 20, 135)
-      doc.text(`Marketing (${distribution.marketing_pct}%) : ${formatFCFA(netM * distribution.marketing_pct / 100)}`, 20, 145)
-      doc.text(`Épargne (${distribution.savings_pct}%) : ${formatFCFA(netM * distribution.savings_pct / 100)}`, 20, 155)
-      doc.text(`Propriétaire (${distribution.owner_pct}%) : ${formatFCFA(netM * distribution.owner_pct / 100)}`, 20, 165)
-      doc.text(`Dîme (${distribution.tithe_pct}%) : ${formatFCFA(netM * distribution.tithe_pct / 100)}`, 20, 175)
-      doc.text(`Imprévu (${distribution.unexpected_pct}%) : ${formatFCFA(netM * distribution.unexpected_pct / 100)}`, 20, 185)
+    if (newStatus === 'paid') {
+      setShowReceiptModal(true)
     }
+  }
 
-    doc.setFontSize(8)
-    doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} — CJS OS`, 105, 280, { align: 'center' })
-    doc.save(`cycle-cjs-${new Date(cycle.started_at).toLocaleDateString('fr-FR').replace(/\//g, '-')}.pdf`)
+  const handleCancel = async () => {
+    if (!cancelReason.trim()) {
+      setError('Le motif est obligatoire')
+      return
+    }
+    setSaving(true)
+
+    await supabase
+      .from('sales')
+      .update({
+        status: 'cancelled',
+        notes: `ANNULÉ — Motif: ${cancelReason}${sale?.notes ? ` | ${sale.notes}` : ''}`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+
+    await supabase.from('logs').insert({
+      shop_id: SHOP_ID,
+      action: `Vente annulée — Motif: ${cancelReason}`,
+      module: 'ventes',
+      reference_id: id,
+    })
+
+    setSaving(false)
+    setShowCancelModal(false)
+    fetchSale()
+  }
+
+  const handlePrint = () => {
+    if (!sale) return
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`
+      <html>
+        <head>
+          <title>Reçu — ${sale.customer?.full_name || sale.customer_name || 'Anonyme'}</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Courier New', monospace; font-size: 12px; width: 80mm; margin: 0 auto; padding: 10px; }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            .divider { border-top: 1px dashed #000; margin: 8px 0; }
+            .row { display: flex; justify-content: space-between; margin: 3px 0; }
+            .total { font-size: 14px; font-weight: bold; }
+            .footer { text-align: center; margin-top: 10px; font-size: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="center bold" style="font-size:16px;">CATH JEWELRY STORE</div>
+          <div class="center">Bonamoussadi, Douala</div>
+          <div class="center">651207853</div>
+          <div class="divider"></div>
+          <div class="row">
+            <span>Date:</span>
+            <span>${new Date(sale.created_at).toLocaleDateString('fr-FR')}</span>
+          </div>
+          <div class="row">
+            <span>Client:</span>
+            <span>${sale.customer?.full_name || sale.customer_name || 'Anonyme'}</span>
+          </div>
+          ${sale.payment_method ? `<div class="row"><span>Paiement:</span><span>${sale.payment_method}</span></div>` : ''}
+          <div class="divider"></div>
+          ${sale.sale_items.map(item => `
+            <div class="row">
+              <span>${item.product_name} ${item.variant_name || ''}</span>
+              <span>${formatFCFA(item.total_price)}</span>
+            </div>
+            <div style="padding-left:10px; color:#666; font-size:11px;">x${item.quantity} × ${formatFCFA(item.unit_price)}</div>
+          `).join('')}
+          <div class="divider"></div>
+          ${sale.discount_amount > 0 ? `
+            <div class="row">
+              <span>Sous-total</span>
+              <span>${formatFCFA(sale.subtotal)}</span>
+            </div>
+            <div class="row" style="color:red;">
+              <span>Réduction</span>
+              <span>-${formatFCFA(sale.discount_amount)}</span>
+            </div>
+          ` : ''}
+          <div class="row total">
+            <span>TOTAL</span>
+            <span>${formatFCFA(sale.total)}</span>
+          </div>
+          <div class="divider"></div>
+          <div class="footer">Merci pour votre achat et à très bientôt !</div>
+          <script>window.onload = () => { window.print(); window.close(); }</script>
+        </body>
+      </html>
+    `)
+    win.document.close()
+  }
+
+  const handleWhatsApp = () => {
+    if (!sale) return
+    const customerPhone = sale.customer?.phone
+    const msg = encodeURIComponent(
+      `Reçu CJS — ${new Date(sale.created_at).toLocaleDateString('fr-FR')}\n` +
+      `Client: ${sale.customer?.full_name || sale.customer_name || 'Anonyme'}\n` +
+      sale.sale_items.map(i =>
+        `• ${i.product_name} ${i.variant_name || ''} x${i.quantity} = ${formatFCFA(i.total_price)}`
+      ).join('\n') +
+      `\nTotal: ${formatFCFA(sale.total)}\nMerci pour votre achat !`
+    )
+    const url = customerPhone
+      ? `https://wa.me/${customerPhone.replace(/\D/g, '')}?text=${msg}`
+      : `https://wa.me/?text=${msg}`
+    window.open(url, '_blank')
   }
 
   const formatFCFA = (amount: number) =>
     new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
 
-  const netMargin = activeCycle?.net_margin || 0
-  const distribAmount = (pct: number) => netMargin > 0 ? (netMargin * pct) / 100 : 0
+  const statusLabel: Record<string, string> = {
+    draft: 'Brouillon',
+    in_delivery: 'En livraison',
+    paid: 'Payée',
+    cancelled: 'Annulée',
+  }
+
+  const statusColor: Record<string, string> = {
+    draft: 'bg-stone-100 text-stone-600',
+    in_delivery: 'bg-blue-100 text-blue-600',
+    paid: 'bg-green-100 text-green-600',
+    cancelled: 'bg-red-100 text-red-500',
+  }
+
+  const filteredVariants = allVariants.filter(v =>
+    v.product.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+    v.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+    v.barcode?.includes(productSearch)
+  )
 
   if (loading) return <div className="p-6 text-stone-400">Chargement...</div>
+  if (!sale) return <div className="p-6 text-stone-400">Vente introuvable</div>
 
   return (
     <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-stone-800">Finance</h1>
-          <p className="text-stone-500 text-sm">Vue d'ensemble financière — Douala, Cameroun (FCFA)</p>
-        </div>
-        <button
-          onClick={() => setShowCloseModal(true)}
-          className="flex items-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          <Lock size={14} />
-          Clôturer cycle
+      <div className="flex items-center gap-3 mb-6">
+        <button onClick={() => router.back()} className="p-2 hover:bg-stone-100 rounded-lg">
+          <ArrowLeft size={18} className="text-stone-600" />
         </button>
-      </div>
-
-      {/* Cycle actif */}
-      {activeCycle && (
-        <div className="bg-white rounded-xl p-5 shadow-sm mb-4">
-          <div className="mb-4">
-            <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-medium">Cycle Actuel</span>
-            <p className="font-semibold text-stone-800 mt-1">
-              Depuis le {new Date(activeCycle.started_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-            </p>
-            <p className="text-xs text-stone-400">Ventes du cycle : {activeCycle.total_sales}</p>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold text-stone-800">Vente</h1>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor[sale.status]}`}>
+              {statusLabel[sale.status]}
+            </span>
           </div>
-          <div className="grid grid-cols-4 gap-4">
-            <div>
-              <p className="text-xs text-stone-400 mb-1">CA Brut</p>
-              <p className="text-xl font-bold text-stone-800">{formatFCFA(activeCycle.gross_revenue)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-stone-400 mb-1">CA Net</p>
-              <p className="text-xl font-bold text-stone-800">{formatFCFA(activeCycle.net_revenue)}</p>
-              <p className="text-xs text-red-400">Réductions: {formatFCFA(activeCycle.gross_revenue - activeCycle.net_revenue)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-stone-400 mb-1">Marge Brute</p>
-              <p className="text-xl font-bold text-stone-800">{formatFCFA(activeCycle.gross_margin)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-stone-400 mb-1">Marge Nette</p>
-              <p className={`text-xl font-bold ${activeCycle.net_margin >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                {formatFCFA(activeCycle.net_margin)}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Charges fixes */}
-      <div className="bg-white rounded-xl p-5 shadow-sm mb-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-stone-700">Charges Fixes</h2>
-          <button onClick={() => setShowCostsModal(true)} className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 font-medium">
-            <Pencil size={12} /> Modifier
-          </button>
-        </div>
-        <div className="grid grid-cols-6 gap-4">
-          {[
-            { label: 'Salaire', value: fixedCosts?.salary || 0 },
-            { label: 'Prime', value: fixedCosts?.bonus || 0 },
-            { label: 'Commission', value: fixedCosts?.commission || 0 },
-            { label: 'Factures', value: fixedCosts?.invoices || 0 },
-            { label: 'Internet', value: fixedCosts?.internet || 0 },
-            { label: 'Imprévus', value: fixedCosts?.unexpected || 0 },
-          ].map((item) => (
-            <div key={item.label}>
-              <p className="text-xs text-stone-400 mb-1">{item.label}</p>
-              <p className="font-semibold text-stone-800">{formatFCFA(item.value)}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 pt-3 border-t border-stone-100">
-          <p className="text-xs text-stone-400">Total charges fixes</p>
-          <p className="text-lg font-bold text-red-500">{formatFCFA(fixedCosts?.total || 0)}</p>
-        </div>
-      </div>
-
-      {/* Répartition */}
-      {distribution && (
-        <div className="bg-white rounded-xl p-5 shadow-sm mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="font-semibold text-stone-700">Répartition Automatique</h2>
-            <button onClick={() => setShowDistribModal(true)} className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 font-medium">
-              <Pencil size={12} /> Modifier %
-            </button>
-          </div>
-          <p className="text-xs text-stone-400 mb-4">
-            Marge Brute ({formatFCFA(activeCycle?.gross_margin || 0)}) - Charges Fixes ({formatFCFA(fixedCosts?.total || 0)}) = Marge Nette ({formatFCFA(netMargin)})
+          <p className="text-stone-500 text-sm">
+            {new Date(sale.created_at).toLocaleDateString('fr-FR')} à{' '}
+            {new Date(sale.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
           </p>
-          {netMargin <= 0 && (
-            <p className="text-xs text-amber-500 mb-3">⚠ La répartition s'applique uniquement sur la marge nette positive</p>
+        </div>
+
+        <div className="flex gap-2">
+          {sale.status === 'draft' && (
+            <>
+              <button onClick={() => handleStatusChange('in_delivery')} disabled={saving} className="border border-blue-300 hover:bg-blue-50 text-blue-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                → En livraison
+              </button>
+              <button onClick={() => { setCancelReason(''); setError(''); setShowCancelModal(true) }} className="border border-red-300 hover:bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Annuler
+              </button>
+            </>
           )}
-          <div className="grid grid-cols-3 gap-4">
-            {[
-              { label: 'Réinvestissement', pct: distribution.reinvestment_pct, color: 'text-blue-600' },
-              { label: 'Marketing', pct: distribution.marketing_pct, color: 'text-purple-600' },
-              { label: 'Épargne', pct: distribution.savings_pct, color: 'text-green-600' },
-              { label: 'Propriétaire', pct: distribution.owner_pct, color: 'text-yellow-600' },
-              { label: 'Dîme', pct: distribution.tithe_pct, color: 'text-orange-600' },
-              { label: 'Imprévu', pct: distribution.unexpected_pct, color: 'text-red-500' },
-            ].map((item) => (
-              <div key={item.label} className="bg-stone-50 rounded-lg p-3">
-                <p className="text-xs text-stone-400">{item.label} ({item.pct}%)</p>
-                <p className={`text-lg font-bold ${item.color}`}>{formatFCFA(distribAmount(item.pct))}</p>
+          {sale.status === 'in_delivery' && (
+            <>
+              <button onClick={() => handleStatusChange('paid')} disabled={saving} className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Marquer payée
+              </button>
+              <button onClick={() => { setCancelReason(''); setError(''); setShowCancelModal(true) }} className="border border-red-300 hover:bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Annuler
+              </button>
+            </>
+          )}
+          {sale.status === 'paid' && (
+            <>
+              <button onClick={() => setShowReceiptModal(true)} className="flex items-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                <Printer size={14} />
+                Reçu
+              </button>
+              {canEdit() && (
+                <button onClick={openEditModal} className="border border-yellow-300 hover:bg-yellow-50 text-yellow-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                  Modifier (48h)
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl p-5 shadow-sm">
+          <h2 className="font-semibold text-stone-700 mb-3">Client</h2>
+          <p className="font-medium text-stone-800">
+            {sale.customer?.full_name || sale.customer_name || 'Client anonyme'}
+          </p>
+          {sale.customer?.phone && <p className="text-sm text-stone-400 mt-1">{sale.customer.phone}</p>}
+          {sale.acquisition_source && <p className="text-xs text-stone-400 mt-2">Source : {sale.acquisition_source}</p>}
+          {sale.payment_method && <p className="text-xs text-stone-400 mt-1">Paiement : {sale.payment_method}</p>}
+          {sale.employee && <p className="text-xs text-stone-400 mt-1">Vendeur : {sale.employee.full_name}</p>}
+          {sale.notes && <p className="text-xs text-stone-500 mt-3 italic">{sale.notes}</p>}
+          {sale.status === 'paid' && sale.paid_at && (
+            <div className="mt-3 pt-3 border-t border-stone-100">
+              {canEdit() ? (
+                <p className="text-xs text-green-600">✓ Modifiable encore</p>
+              ) : (
+                <p className="text-xs text-stone-400">Non modifiable (plus de 48h)</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="col-span-2 bg-white rounded-xl p-5 shadow-sm">
+          <h2 className="font-semibold text-stone-700 mb-3">Articles</h2>
+          <div className="space-y-2 mb-4">
+            {sale.sale_items.map((item) => (
+              <div key={item.id} className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-stone-700">{item.product_name}</p>
+                  {item.variant_name && <p className="text-xs text-stone-400">{item.variant_name}</p>}
+                </div>
+                <div className="flex gap-6 text-right">
+                  <span className="text-sm text-stone-400">x{item.quantity}</span>
+                  <span className="text-sm text-stone-500">{formatFCFA(item.unit_price)}</span>
+                  <span className="text-sm font-bold text-stone-800">{formatFCFA(item.total_price)}</span>
+                </div>
               </div>
             ))}
           </div>
+
+          <div className="border-t border-stone-100 pt-3 space-y-1">
+            <div className="flex justify-between text-sm text-stone-500">
+              <span>Sous-total</span>
+              <span>{formatFCFA(sale.subtotal)}</span>
+            </div>
+            {sale.discount_amount > 0 && (
+              <div className="flex justify-between text-sm text-red-400">
+                <span>Réduction</span>
+                <span>-{formatFCFA(sale.discount_amount)}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-bold text-stone-800 text-lg">
+              <span>Total</span>
+              <span>{formatFCFA(sale.total)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal annulation */}
+      {showCancelModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-stone-800">Annuler la vente</h2>
+              <button onClick={() => setShowCancelModal(false)}><X size={18} className="text-stone-400" /></button>
+            </div>
+            <p className="text-sm text-stone-500 mb-3">Le motif est obligatoire.</p>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Motif de l'annulation..."
+              rows={3}
+              className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-3"
+            />
+            {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
+            <div className="flex gap-3">
+              <button onClick={handleCancel} disabled={saving} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                {saving ? '...' : 'Confirmer l\'annulation'}
+              </button>
+              <button onClick={() => { setShowCancelModal(false); setError('') }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
+                Retour
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Cycles clôturés */}
-      {closedCycles.length > 0 && (
-        <div className="bg-white rounded-xl p-5 shadow-sm">
-          <h2 className="font-semibold text-stone-700 mb-4">Cycles Clôturés ({closedCycles.length})</h2>
-          <div className="space-y-3">
-            {closedCycles.map((cycle) => (
-              <div key={cycle.id} className="border border-stone-100 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium text-stone-700">
-                    {new Date(cycle.started_at).toLocaleDateString('fr-FR')} → {cycle.closed_at ? new Date(cycle.closed_at).toLocaleDateString('fr-FR') : ''}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">Clôturé</span>
-                    <button
-                      onClick={() => handleExportPDF(cycle)}
-                      className="flex items-center gap-1 text-xs text-yellow-600 hover:text-yellow-700 border border-yellow-300 px-2 py-0.5 rounded-lg transition-colors"
-                    >
-                      <FileDown size={12} />
-                      PDF
+      {/* Modal modification 48h */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-stone-800">Modifier la vente</h2>
+              <button onClick={() => setShowEditModal(false)}><X size={18} className="text-stone-400" /></button>
+            </div>
+
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <label className="block text-sm font-medium text-amber-700 mb-1">Motif de modification *</label>
+              <input
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                placeholder="Ex: Erreur de produit, demande client..."
+                className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-xs text-stone-500 mb-1">Client</label>
+                <input value={editCustomerName} onChange={(e) => setEditCustomerName(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-xs text-stone-500 mb-1">Source</label>
+                <select value={editSource} onChange={(e) => setEditSource(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400">
+                  <option value="">Sélectionner...</option>
+                  {['TikTok','WhatsApp','Facebook','Instagram','Boutique','Recommandation','Autre'].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-stone-500 mb-1">Paiement</label>
+                <input value={editPayment} onChange={(e) => setEditPayment(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-xs text-stone-500 mb-1">Type réduction</label>
+                <select value={editDiscountType} onChange={(e) => setEditDiscountType(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400">
+                  <option value="">Aucune</option>
+                  <option value="fixed">Montant fixe</option>
+                  <option value="percent">Pourcentage</option>
+                </select>
+              </div>
+              {editDiscountType && (
+                <div>
+                  <label className="block text-xs text-stone-500 mb-1">Valeur {editDiscountType === 'percent' ? '(%)' : '(FCFA)'}</label>
+                  <input type="number" value={editDiscountValue} onChange={(e) => setEditDiscountValue(Number(e.target.value))} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+                </div>
+              )}
+              <div className="col-span-2">
+                <label className="block text-xs text-stone-500 mb-1">Notes</label>
+                <input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-stone-700">Articles</h3>
+                <button onClick={() => setShowProductSearch(true)} className="flex items-center gap-1 text-xs text-yellow-600 border border-yellow-300 px-2 py-1 rounded-lg">
+                  <Plus size={12} /> Ajouter
+                </button>
+              </div>
+
+              {showProductSearch && (
+                <div className="mb-3">
+                  <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Rechercher un produit..." autoFocus className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-2" />
+                  <div className="max-h-40 overflow-y-auto border border-stone-200 rounded-lg">
+                    {filteredVariants.map(v => (
+                      <button key={v.id} onClick={() => addToEditCart(v)} className="w-full flex items-center justify-between px-3 py-2 hover:bg-stone-50 text-left">
+                        <div>
+                          <p className="text-sm font-medium text-stone-700">{v.product.name}</p>
+                          <p className="text-xs text-stone-400">{v.name}</p>
+                        </div>
+                        <span className="text-sm font-bold text-stone-700">{formatFCFA(v.sale_price)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {editCart.map((item, index) => (
+                  <div key={index} className="flex items-center gap-3 bg-stone-50 rounded-lg px-3 py-2">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-stone-700">{item.product_name}</p>
+                      <p className="text-xs text-stone-400">{item.variant_name}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => updateEditQty(item.variant_id || '', item.quantity - 1)} className="w-6 h-6 rounded-full bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-sm">-</button>
+                      <span className="text-sm font-medium w-4 text-center">{item.quantity}</span>
+                      <button onClick={() => updateEditQty(item.variant_id || '', item.quantity + 1)} className="w-6 h-6 rounded-full bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-sm">+</button>
+                    </div>
+                    <p className="text-sm font-bold text-stone-800 w-24 text-right">{formatFCFA(item.unit_price * item.quantity)}</p>
+                    <button onClick={() => setEditCart(editCart.filter((_, i) => i !== index))} className="text-red-400 hover:text-red-500">
+                      <Trash2 size={14} />
                     </button>
                   </div>
-                </div>
-                <div className="grid grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-xs text-stone-400">Ventes</p>
-                    <p className="font-bold text-stone-800">{cycle.total_sales}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-stone-400">CA Brut</p>
-                    <p className="font-bold text-stone-800">{formatFCFA(cycle.gross_revenue)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-stone-400">CA Net</p>
-                    <p className="font-bold text-stone-800">{formatFCFA(cycle.net_revenue)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-stone-400">Marge Nette</p>
-                    <p className={`font-bold ${cycle.net_margin >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {formatFCFA(cycle.net_margin)}
-                    </p>
-                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-stone-100">
+                <div className="flex justify-between font-bold text-stone-800">
+                  <span>Nouveau total</span>
+                  <span>{formatFCFA(editTotal)}</span>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
 
-      {/* Modal charges fixes */}
-      {showCostsModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-stone-800">Modifier les charges fixes</h2>
-              <button onClick={() => setShowCostsModal(false)}><X size={18} className="text-stone-400" /></button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { key: 'salary', label: 'Salaire fixe' },
-                { key: 'bonus', label: 'Prime' },
-                { key: 'commission', label: 'Commission' },
-                { key: 'invoices', label: 'Factures' },
-                { key: 'internet', label: 'Internet' },
-                { key: 'unexpected', label: 'Imprévus' },
-                { key: 'other', label: 'Autres' },
-              ].map((field) => (
-                <div key={field.key}>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">{field.label} (FCFA)</label>
-                  <input
-                    type="number"
-                    value={costsForm[field.key as keyof typeof costsForm]}
-                    onChange={(e) => setCostsForm({ ...costsForm, [field.key]: Number(e.target.value) })}
-                    className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 p-3 bg-stone-50 rounded-lg">
-              <p className="text-sm font-medium text-stone-700">
-                Total : {formatFCFA(Object.values(costsForm).reduce((sum, v) => sum + v, 0))}
-              </p>
-            </div>
-            <div className="flex gap-3 mt-4">
-              <button onClick={handleSaveCosts} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? 'Enregistrement...' : 'Enregistrer'}
-              </button>
-              <button onClick={() => setShowCostsModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
-            </div>
-          </div>
-        </div>
-      )}
+            {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
 
-      {/* Modal répartition */}
-      {showDistribModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-stone-800">Modifier les pourcentages</h2>
-              <button onClick={() => { setShowDistribModal(false); setError('') }}><X size={18} className="text-stone-400" /></button>
-            </div>
-            <div className="space-y-3">
-              {[
-                { key: 'reinvestment_pct', label: 'Réinvestissement' },
-                { key: 'marketing_pct', label: 'Marketing' },
-                { key: 'savings_pct', label: 'Épargne' },
-                { key: 'owner_pct', label: 'Propriétaire' },
-                { key: 'tithe_pct', label: 'Dîme' },
-                { key: 'unexpected_pct', label: 'Imprévu' },
-              ].map((field) => (
-                <div key={field.key} className="flex items-center gap-3">
-                  <label className="text-sm text-stone-700 w-36">{field.label}</label>
-                  <input
-                    type="number"
-                    value={distribForm[field.key as keyof typeof distribForm]}
-                    onChange={(e) => setDistribForm({ ...distribForm, [field.key]: Number(e.target.value) })}
-                    className="w-20 border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  />
-                  <span className="text-sm text-stone-400">%</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 p-3 bg-stone-50 rounded-lg">
-              <p className={`text-sm font-medium ${Object.values(distribForm).reduce((sum, v) => sum + v, 0) === 100 ? 'text-green-600' : 'text-red-500'}`}>
-                Total : {Object.values(distribForm).reduce((sum, v) => sum + v, 0)}% (doit être 100%)
-              </p>
-            </div>
-            {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
-            <div className="flex gap-3 mt-4">
-              <button onClick={handleSaveDistrib} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? 'Enregistrement...' : 'Enregistrer'}
-              </button>
-              <button onClick={() => { setShowDistribModal(false); setError('') }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal clôture */}
-      {showCloseModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-stone-800">Clôturer le cycle</h2>
-              <button onClick={() => setShowCloseModal(false)}><X size={18} className="text-stone-400" /></button>
-            </div>
-            <p className="text-sm text-stone-500 mb-4">Cette action clôture le cycle actuel et en crée un nouveau.</p>
-            <div className="bg-stone-50 rounded-lg p-4 mb-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-stone-500">CA Brut</span>
-                <span className="font-medium">{formatFCFA(activeCycle?.gross_revenue || 0)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-stone-500">Marge Nette</span>
-                <span className={`font-bold ${(activeCycle?.net_margin || 0) >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                  {formatFCFA(activeCycle?.net_margin || 0)}
-                </span>
-              </div>
-            </div>
             <div className="flex gap-3">
-              <button onClick={handleCloseCycle} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? 'Clôture...' : 'Confirmer la clôture'}
+              <button onClick={handleSaveEdit} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                {saving ? 'Enregistrement...' : 'Enregistrer les modifications'}
               </button>
-              <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
+              <button onClick={() => setShowEditModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
+                Annuler
+              </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal reçu */}
+      {showReceiptModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-stone-800">Reçu de vente</h2>
+              <button onClick={() => setShowReceiptModal(false)}><X size={18} className="text-stone-400" /></button>
+            </div>
+
+            <div className="border border-stone-200 rounded-xl p-4 mb-4 font-mono text-sm">
+              <div className="text-center mb-3">
+                <p className="font-bold text-stone-800 text-base">CATH JEWELRY STORE</p>
+                <p className="text-xs text-stone-400">Bonamoussadi Douala</p>
+                <p className="text-xs text-stone-400">651207853</p>
+              </div>
+              <div className="border-t border-dashed border-stone-200 pt-2 mb-2">
+                <p className="text-xs text-stone-500">Date : {new Date(sale.created_at).toLocaleDateString('fr-FR')}</p>
+                <p className="text-xs text-stone-500">Client : {sale.customer?.full_name || sale.customer_name || 'Anonyme'}</p>
+                {sale.payment_method && <p className="text-xs text-stone-500">Paiement : {sale.payment_method}</p>}
+              </div>
+              <div className="border-t border-dashed border-stone-200 pt-2 mb-2 space-y-1">
+                {sale.sale_items.map((item) => (
+                  <div key={item.id}>
+                    <div className="flex justify-between text-xs">
+                      <span>{item.product_name} {item.variant_name}</span>
+                      <span>{formatFCFA(item.total_price)}</span>
+                    </div>
+                    <div className="text-xs text-stone-400 pl-2">x{item.quantity} × {formatFCFA(item.unit_price)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-dashed border-stone-200 pt-2">
+                {sale.discount_amount > 0 && (
+                  <>
+                    <div className="flex justify-between text-xs text-stone-500">
+                      <span>Sous-total</span>
+                      <span>{formatFCFA(sale.subtotal)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-red-400">
+                      <span>Réduction</span>
+                      <span>-{formatFCFA(sale.discount_amount)}</span>
+                    </div>
+                  </>
+                )}
+                <div className="flex justify-between font-bold text-stone-800">
+                  <span>TOTAL</span>
+                  <span>{formatFCFA(sale.total)}</span>
+                </div>
+              </div>
+              <p className="text-center text-xs text-stone-400 mt-3">Merci pour votre achat et à très bientôt !</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={handlePrint} className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-600 py-2.5 rounded-lg text-sm font-medium transition-colors">
+                <Printer size={14} />
+                Imprimer
+              </button>
+              <button onClick={handleWhatsApp} className="flex items-center justify-center gap-2 bg-green-500 hover:bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors">
+                <Send size={14} />
+                WhatsApp
+              </button>
+            </div>
+            <button onClick={() => setShowReceiptModal(false)} className="w-full mt-2 text-stone-400 hover:text-stone-600 text-sm py-2">
+              Fermer
+            </button>
           </div>
         </div>
       )}
