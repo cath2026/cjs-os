@@ -6,7 +6,7 @@ import { Plus, Trash2, Package, Image } from 'lucide-react'
 
 type Category = { id: string; name: string; prefix: string; next_ref_number: number }
 type Variant = { id: string; name: string; sale_price: number; cost_price: number; stock_quantity: number; barcode?: string }
-type Product = { id: string; name: string; description?: string; category_id?: string; is_active: boolean; image_url?: string; category?: Category; variants?: Variant[] }
+type Product = { id: string; name: string; nameen?: string; description?: string; category_id?: string; is_active: boolean; image_url?: string; image_url_2?: string; image_url_3?: string; price?: number; stock?: number; barcode?: string; category?: Category; variants?: Variant[] }
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
@@ -18,13 +18,19 @@ export default function ProduitsPage() {
   const [showModal, setShowModal] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [form, setForm] = useState({ name: '', category_id: '', description: '' })
+  const [form, setForm] = useState({ name: '', nameen: '', category_id: '', description: '' })
   const [variants, setVariants] = useState([
     { name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }
   ])
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [imageFile1, setImageFile1] = useState<File | null>(null)
+  const [imageFile2, setImageFile2] = useState<File | null>(null)
+  const [imageFile3, setImageFile3] = useState<File | null>(null)
+  const [imagePreview1, setImagePreview1] = useState<string | null>(null)
+  const [imagePreview2, setImagePreview2] = useState<string | null>(null)
+  const [imagePreview3, setImagePreview3] = useState<string | null>(null)
+  const fileInputRef1 = useRef<HTMLInputElement>(null)
+  const fileInputRef2 = useRef<HTMLInputElement>(null)
+  const fileInputRef3 = useRef<HTMLInputElement>(null)
 
   const fetchProducts = async () => {
     const { data } = await supabase
@@ -52,20 +58,21 @@ export default function ProduitsPage() {
     fetchCategories()
   }, [])
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>, slot: 1 | 2 | 3) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setImageFile(file)
-    setImagePreview(URL.createObjectURL(file))
+    const preview = URL.createObjectURL(file)
+    if (slot === 1) { setImageFile1(file); setImagePreview1(preview) }
+    if (slot === 2) { setImageFile2(file); setImagePreview2(preview) }
+    if (slot === 3) { setImageFile3(file); setImagePreview3(preview) }
   }
 
-  const uploadImage = async (productId: string): Promise<string | null> => {
-    if (!imageFile) return null
-    const ext = imageFile.name.split('.').pop()
-    const path = `${productId}.${ext}`
+  const uploadImage = async (productId: string, file: File, slot: 1 | 2 | 3): Promise<string | null> => {
+    const ext = file.name.split('.').pop()
+    const path = `${productId}_${slot}.${ext}`
     const { error } = await supabase.storage
       .from('products')
-      .upload(path, imageFile, { upsert: true })
+      .upload(path, file, { upsert: true })
     if (error) return null
     const { data } = supabase.storage.from('products').getPublicUrl(path)
     return data.publicUrl
@@ -86,9 +93,8 @@ export default function ProduitsPage() {
     setVariants(variants.filter((_, i) => i !== index))
   }
 
-  const updateStock = async (variantId: string, newQty: number, currentQty: number) => {
+  const updateStock = async (variantId: string, newQty: number, currentQty: number, productId: string) => {
     if (newQty < 0) return
-
     const { data: { user } } = await supabase.auth.getUser()
     const { data: empData } = await supabase
       .from('employees')
@@ -112,6 +118,15 @@ export default function ProduitsPage() {
       notes: 'Ajustement manuel',
     })
 
+    // Recalculer stock total du produit
+    const { data: allVariants } = await supabase
+      .from('variants')
+      .select('stock_quantity')
+      .eq('product_id', productId)
+
+    const totalStock = (allVariants || []).reduce((sum, v) => sum + v.stock_quantity, 0)
+    await supabase.from('products').update({ stock: totalStock }).eq('id', productId)
+
     fetchProducts()
   }
 
@@ -134,13 +149,23 @@ export default function ProduitsPage() {
       return
     }
 
+    // Calculs agrégés
+    const totalStock = variants.reduce((sum, v) => sum + v.stock_quantity, 0)
+    const minPrice = Math.min(...variants.map(v => v.sale_price))
+    const firstBarcode = `CJS-${cat.prefix}-${String(cat.next_ref_number).padStart(4, '0')}`
+
+    // Créer le produit
     const { data: product, error: productError } = await supabase
       .from('products')
       .insert({
         shop_id: SHOP_ID,
         name: form.name,
+        nameen: form.nameen,
         category_id: form.category_id,
         description: form.description,
+        stock: totalStock,
+        price: minPrice,
+        barcode: firstBarcode,
       })
       .select()
       .single()
@@ -151,17 +176,17 @@ export default function ProduitsPage() {
       return
     }
 
-    // Upload image si présente
-    if (imageFile) {
-      const imageUrl = await uploadImage(product.id)
-      if (imageUrl) {
-        await supabase
-          .from('products')
-          .update({ image_url: imageUrl })
-          .eq('id', product.id)
-      }
+    // Upload images
+    const imageUrls: { image_url?: string; image_url_2?: string; image_url_3?: string } = {}
+    if (imageFile1) { const url = await uploadImage(product.id, imageFile1, 1); if (url) imageUrls.image_url = url }
+    if (imageFile2) { const url = await uploadImage(product.id, imageFile2, 2); if (url) imageUrls.image_url_2 = url }
+    if (imageFile3) { const url = await uploadImage(product.id, imageFile3, 3); if (url) imageUrls.image_url_3 = url }
+
+    if (Object.keys(imageUrls).length > 0) {
+      await supabase.from('products').update(imageUrls).eq('id', product.id)
     }
 
+    // Créer les variantes
     for (let i = 0; i < variants.length; i++) {
       const refNum = cat.next_ref_number + i
       const barcode = `CJS-${cat.prefix}-${String(refNum).padStart(4, '0')}`
@@ -184,6 +209,7 @@ export default function ProduitsPage() {
       })
     }
 
+    // Mettre à jour le compteur de catégorie
     await supabase
       .from('categories')
       .update({ next_ref_number: cat.next_ref_number + variants.length })
@@ -191,10 +217,10 @@ export default function ProduitsPage() {
 
     setSaving(false)
     setShowModal(false)
-    setForm({ name: '', category_id: '', description: '' })
+    setForm({ name: '', nameen: '', category_id: '', description: '' })
     setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
-    setImageFile(null)
-    setImagePreview(null)
+    setImageFile1(null); setImageFile2(null); setImageFile3(null)
+    setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
     fetchProducts()
     fetchCategories()
   }
@@ -217,10 +243,10 @@ export default function ProduitsPage() {
         </div>
         <button
           onClick={() => {
-            setForm({ name: '', category_id: '', description: '' })
+            setForm({ name: '', nameen: '', category_id: '', description: '' })
             setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
-            setImageFile(null)
-            setImagePreview(null)
+            setImageFile1(null); setImageFile2(null); setImageFile3(null)
+            setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
             setError('')
             setShowModal(true)
           }}
@@ -242,34 +268,34 @@ export default function ProduitsPage() {
         <div className="grid grid-cols-3 gap-4">
           {products.map((product) => (
             <div key={product.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
-              {/* Image produit */}
               {product.image_url ? (
-                <img
-                  src={product.image_url}
-                  alt={product.name}
-                  className="w-full h-40 object-cover"
-                />
+                <img src={product.image_url} alt={product.name} className="w-full h-40 object-cover" />
               ) : (
                 <div className="w-full h-40 bg-stone-100 flex items-center justify-center">
                   <Image size={32} className="text-stone-300" />
                 </div>
               )}
-
               <div className="p-4">
                 <div className="flex items-start justify-between mb-2">
                   <div>
                     <h3 className="font-semibold text-stone-800">{product.name}</h3>
+                    {product.nameen && <p className="text-xs text-stone-400">{product.nameen}</p>}
                     <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
                       {product.category?.name}
                     </span>
                   </div>
-                  <button
-                    onClick={() => handleDelete(product.id)}
-                    className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg"
-                  >
+                  <button onClick={() => handleDelete(product.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg">
                     <Trash2 size={14} />
                   </button>
                 </div>
+
+                {/* Images supplémentaires */}
+                {(product.image_url_2 || product.image_url_3) && (
+                  <div className="flex gap-2 mb-3">
+                    {product.image_url_2 && <img src={product.image_url_2} alt="" className="w-12 h-12 object-cover rounded-lg" />}
+                    {product.image_url_3 && <img src={product.image_url_3} alt="" className="w-12 h-12 object-cover rounded-lg" />}
+                  </div>
+                )}
 
                 <div className="mt-3 space-y-2">
                   {product.variants?.map((v) => (
@@ -281,12 +307,12 @@ export default function ProduitsPage() {
                       <div className="flex items-center justify-between text-xs">
                         <div className="flex items-center gap-1">
                           <button
-                            onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity)}
+                            onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity, product.id)}
                             className="w-5 h-5 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-stone-600 font-bold"
                           >-</button>
                           <span className="text-stone-700 font-medium w-6 text-center">{v.stock_quantity}</span>
                           <button
-                            onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity)}
+                            onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity, product.id)}
                             className="w-5 h-5 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-stone-600 font-bold"
                           >+</button>
                           <span className="text-stone-400 ml-1">en stock</span>
@@ -296,46 +322,63 @@ export default function ProduitsPage() {
                     </div>
                   ))}
                 </div>
+
+                <div className="mt-2 pt-2 border-t border-stone-100 flex justify-between text-xs text-stone-400">
+                  <span>Stock total: <strong className="text-stone-600">{product.stock || 0}</strong></span>
+                  <span>{product.barcode}</span>
+                </div>
               </div>
             </div>
           ))}
         </div>
       )}
 
+      {/* MODAL CRÉATION */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold text-stone-800 mb-4">Nouveau produit</h2>
 
-            {/* Upload image */}
+            {/* 3 IMAGES */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-stone-700 mb-2">Photo du produit</label>
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-stone-300 rounded-xl p-4 text-center cursor-pointer hover:border-yellow-400 transition-colors"
-              >
-                {imagePreview ? (
-                  <img src={imagePreview} alt="Preview" className="w-full h-40 object-cover rounded-lg" />
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-24">
-                    <Image size={24} className="text-stone-300 mb-2" />
-                    <p className="text-xs text-stone-400">Cliquez pour ajouter une photo</p>
+              <label className="block text-sm font-medium text-stone-700 mb-2">Photos du produit (3 max)</label>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { slot: 1 as const, file: imageFile1, preview: imagePreview1, ref: fileInputRef1 },
+                  { slot: 2 as const, file: imageFile2, preview: imagePreview2, ref: fileInputRef2 },
+                  { slot: 3 as const, file: imageFile3, preview: imagePreview3, ref: fileInputRef3 },
+                ]).map(({ slot, preview, ref }) => (
+                  <div key={slot}>
+                    <div
+                      onClick={() => ref.current?.click()}
+                      className="border-2 border-dashed border-stone-300 rounded-xl cursor-pointer hover:border-yellow-400 transition-colors overflow-hidden"
+                      style={{ height: '90px' }}
+                    >
+                      {preview ? (
+                        <img src={preview} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-full">
+                          <Image size={18} className="text-stone-300 mb-1" />
+                          <p className="text-xs text-stone-400">Photo {slot}</p>
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      ref={ref}
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleImageChange(e, slot)}
+                      className="hidden"
+                    />
                   </div>
-                )}
+                ))}
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleImageChange}
-                className="hidden"
-              />
             </div>
 
             <div className="space-y-3 mb-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Nom du produit *</label>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Nom (FR) *</label>
                   <input
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -343,18 +386,27 @@ export default function ProduitsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Catégorie *</label>
-                  <select
-                    value={form.category_id}
-                    onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Nom (EN)</label>
+                  <input
+                    value={form.nameen}
+                    onChange={(e) => setForm({ ...form, nameen: e.target.value })}
                     className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  >
-                    <option value="">Sélectionner une catégorie</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Catégorie *</label>
+                <select
+                  value={form.category_id}
+                  onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                >
+                  <option value="">Sélectionner une catégorie</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -368,6 +420,7 @@ export default function ProduitsPage() {
               </div>
             </div>
 
+            {/* VARIANTES */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold text-stone-700">Variantes</h3>
@@ -375,7 +428,6 @@ export default function ProduitsPage() {
                   + Ajouter une variante
                 </button>
               </div>
-
               {variants.map((variant, index) => (
                 <div key={index} className="border border-stone-200 rounded-lg p-3 mb-2">
                   <div className="flex items-center justify-between mb-2">
@@ -390,7 +442,7 @@ export default function ProduitsPage() {
                       <input
                         value={variant.name}
                         onChange={(e) => updateVariant(index, 'name', e.target.value)}
-                        placeholder="Ex: Rouge, Taille M..."
+                        placeholder="Ex: 40cm, Taille S..."
                         className="w-full border border-stone-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400"
                       />
                     </div>
