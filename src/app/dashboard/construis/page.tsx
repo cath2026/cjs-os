@@ -10,6 +10,7 @@ type CustomPart = {
   name: string
   name_en?: string
   price: number
+  cost_price: number
   stock: number
   image_url?: string
   is_active: boolean
@@ -25,7 +26,14 @@ export default function ConstruisPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<'chain' | 'charm'>('chain')
-  const [form, setForm] = useState({ type: 'chain' as 'chain' | 'charm', name: '', name_en: '', price: 0, stock: 0 })
+  const [form, setForm] = useState({
+    type: 'chain' as 'chain' | 'charm',
+    name: '',
+    name_en: '',
+    price: 0,
+    cost_price: 0,
+    stock: 0,
+  })
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -62,7 +70,7 @@ export default function ConstruisPage() {
 
   const handleSave = async () => {
     if (!form.name) { setError('Nom obligatoire'); return }
-    if (form.price <= 0) { setError('Prix obligatoire'); return }
+    if (form.price <= 0) { setError('Prix de vente obligatoire'); return }
     setSaving(true)
     setError('')
 
@@ -74,6 +82,7 @@ export default function ConstruisPage() {
         name: form.name,
         name_en: form.name_en,
         price: form.price,
+        cost_price: form.cost_price,
         stock: form.stock,
         is_active: true,
       })
@@ -89,7 +98,7 @@ export default function ConstruisPage() {
 
     setSaving(false)
     setShowModal(false)
-    setForm({ type: 'chain', name: '', name_en: '', price: 0, stock: 0 })
+    setForm({ type: activeTab, name: '', name_en: '', price: 0, cost_price: 0, stock: 0 })
     setImageFile(null)
     setImagePreview(null)
     fetchParts()
@@ -118,7 +127,7 @@ export default function ConstruisPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-stone-800">Construis ton bijou</h1>
-          <p className="text-stone-500 text-sm">{chains.length} type(s) de chaîne · {charms.length} charm(s)</p>
+          <p className="text-stone-500 text-sm">{chains.length} chaîne(s) · {charms.length} charm(s)</p>
         </div>
         <div className="flex gap-2">
           <button onClick={fetchParts} className="flex items-center gap-2 border border-stone-300 text-stone-600 px-3 py-2 rounded-lg text-sm hover:bg-stone-50">
@@ -126,7 +135,7 @@ export default function ConstruisPage() {
           </button>
           <button
             onClick={() => {
-              setForm({ type: activeTab, name: '', name_en: '', price: 0, stock: 0 })
+              setForm({ type: activeTab, name: '', name_en: '', price: 0, cost_price: 0, stock: 0 })
               setImageFile(null)
               setImagePreview(null)
               setError('')
@@ -140,18 +149,26 @@ export default function ConstruisPage() {
         </div>
       </div>
 
-      {/* LIEN SITE */}
+      {/* INFO LIEN SITE */}
       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-6 flex items-center gap-3">
-        <Link size={16} className="text-yellow-600" />
-        <p className="text-sm text-yellow-700">Ces pièces apparaissent automatiquement sur la page <strong>Construis ton bijou</strong> du site client.</p>
+        <Link size={16} className="text-yellow-600 flex-shrink-0" />
+        <p className="text-sm text-yellow-700">
+          Ces pièces apparaissent automatiquement sur la page <strong>Construis ton bijou</strong> du site client.
+        </p>
       </div>
 
       {/* TABS */}
       <div className="flex gap-2 mb-6">
-        <button onClick={() => setActiveTab('chain')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'chain' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600 hover:bg-stone-50'}`}>
+        <button
+          onClick={() => setActiveTab('chain')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'chain' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+        >
           Chaînes ({chains.length})
         </button>
-        <button onClick={() => setActiveTab('charm')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'charm' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600 hover:bg-stone-50'}`}>
+        <button
+          onClick={() => setActiveTab('charm')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'charm' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600 hover:bg-stone-50'}`}
+        >
           Charms ({charms.length})
         </button>
       </div>
@@ -186,7 +203,8 @@ export default function ConstruisPage() {
                     <Trash2 size={13} />
                   </button>
                 </div>
-                <p className="text-yellow-600 font-bold text-sm mb-2">{formatFCFA(part.price)}</p>
+                <p className="text-yellow-600 font-bold text-sm">{formatFCFA(part.price)}</p>
+                <p className="text-stone-400 text-xs mb-2">Revient: {formatFCFA(part.cost_price)}</p>
                 <div className="flex items-center gap-1">
                   <button onClick={() => updateStock(part.id, part.stock - 1)} className="w-6 h-6 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-xs font-bold">-</button>
                   <span className="text-sm font-medium w-8 text-center">{part.stock}</span>
@@ -202,24 +220,28 @@ export default function ConstruisPage() {
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold text-stone-800 mb-4">
               {form.type === 'chain' ? 'Nouvelle chaîne' : 'Nouveau charm'}
             </h2>
 
             {/* Type */}
             <div className="flex gap-2 mb-4">
-              <button onClick={() => setForm({ ...form, type: 'chain' })} className={`flex-1 py-2 rounded-lg text-sm font-medium ${form.type === 'chain' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600'}`}>
+              <button onClick={() => setForm({ ...form, type: 'chain' })} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${form.type === 'chain' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600'}`}>
                 Chaîne
               </button>
-              <button onClick={() => setForm({ ...form, type: 'charm' })} className={`flex-1 py-2 rounded-lg text-sm font-medium ${form.type === 'charm' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600'}`}>
+              <button onClick={() => setForm({ ...form, type: 'charm' })} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${form.type === 'charm' ? 'bg-stone-800 text-white' : 'border border-stone-300 text-stone-600'}`}>
                 Charm
               </button>
             </div>
 
             {/* Image */}
             <div className="mb-4">
-              <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-stone-300 rounded-xl cursor-pointer hover:border-yellow-400 transition-colors overflow-hidden" style={{ height: '120px' }}>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-stone-300 rounded-xl cursor-pointer hover:border-yellow-400 transition-colors overflow-hidden"
+                style={{ height: '120px' }}
+              >
                 {imagePreview ? (
                   <img src={imagePreview} alt="" className="w-full h-full object-cover" />
                 ) : (
@@ -245,13 +267,17 @@ export default function ConstruisPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Prix (FCFA) *</label>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Prix de vente (FCFA) *</label>
                   <input type="number" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-1">Stock initial</label>
-                  <input type="number" value={form.stock} onChange={e => setForm({ ...form, stock: Number(e.target.value) })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Coût de revient (FCFA)</label>
+                  <input type="number" value={form.cost_price} onChange={e => setForm({ ...form, cost_price: Number(e.target.value) })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Stock initial</label>
+                <input type="number" value={form.stock} onChange={e => setForm({ ...form, stock: Number(e.target.value) })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
               </div>
             </div>
 
