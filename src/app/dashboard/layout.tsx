@@ -43,6 +43,7 @@ const allNavItems = [
   { href: '/dashboard/employes', label: 'Employés', icon: UserCog, permission: 'employees.view_list' },
   { href: '/dashboard/parametres', label: 'Paramètres', icon: Settings, permission: 'settings.edit_language' },
   { href: '/dashboard/logs', label: 'Logs', icon: FileText, permission: 'logs.view_global' },
+  { href: '/dashboard/construis', label: 'Construis ton bijou', icon: '💎' }
 ]
 
 export default function DashboardLayout({
