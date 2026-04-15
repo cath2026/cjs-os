@@ -19,6 +19,7 @@ import {
   Settings,
   FileText,
   LogOut,
+  Gem,
 } from 'lucide-react'
 
 type Employee = {
@@ -43,14 +44,10 @@ const allNavItems = [
   { href: '/dashboard/employes', label: 'Employés', icon: UserCog, permission: 'employees.view_list' },
   { href: '/dashboard/parametres', label: 'Paramètres', icon: Settings, permission: 'settings.edit_language' },
   { href: '/dashboard/logs', label: 'Logs', icon: FileText, permission: 'logs.view_global' },
-  { href: '/dashboard/construis', label: 'Construis ton bijou', icon: '💎' }
+  { href: '/dashboard/construis', label: 'Construis', icon: Gem, permission: null },
 ]
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const supabase = createClient()
@@ -70,15 +67,12 @@ export default function DashboardLayout({
 
       if (data) {
         setEmployee(data)
-
-        // Filtrer les menus selon les permissions
         if (data.role === 'admin') {
           setNavItems(allNavItems)
         } else {
           const grantedPerms = data.permissions
             .filter((p: any) => p.granted)
             .map((p: any) => p.permission_code)
-
           const filtered = allNavItems.filter(item =>
             item.permission === null || grantedPerms.includes(item.permission)
           )
@@ -99,9 +93,7 @@ export default function DashboardLayout({
       <aside className="w-48 bg-white border-r border-stone-200 flex flex-col">
         <div className="p-4 border-b border-stone-200">
           <div className="w-12 h-12 bg-black rounded-lg flex items-center justify-center mb-2">
-            <span className="text-yellow-400 font-bold text-xs text-center leading-tight">
-              CJS
-            </span>
+            <span className="text-yellow-400 font-bold text-xs text-center leading-tight">CJS</span>
           </div>
           <p className="text-xs text-stone-500 truncate">{employee?.full_name}</p>
           <p className="text-xs text-stone-300 truncate capitalize">{employee?.role}</p>
