@@ -29,6 +29,8 @@ type Order = {
   items: any[]
   created_at: string
   auth_user_id: string
+  customer_name?: string
+  customer_phone?: string
 }
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
@@ -99,9 +101,24 @@ export default function VentesPage() {
     { key: 'cancelled', label: 'Annulées' },
   ]
 
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  const updateOrderStatus = async (orderId: string, newStatus: string, order: Order) => {
     await supabase.from('orders').update({ status: newStatus }).eq('id', orderId)
+
+    // Si livré → enregistrer dans les ventes boutique pour le CA
+    if (newStatus === 'livré') {
+      await supabase.from('sales').insert({
+        shop_id: SHOP_ID,
+        total: order.total,
+        discount_amount: order.discount || 0,
+        status: 'paid',
+        customer_name: order.customer_name || 'Client site',
+        acquisition_source: 'site',
+        notes: `Commande site #${order.order_ref}`,
+      })
+    }
+
     fetchOrders()
+    fetchSales()
   }
 
   return (
@@ -206,59 +223,93 @@ export default function VentesPage() {
               <p className="text-stone-400 font-medium">Aucune commande site</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {orders.map((order) => (
                 <div key={order.id} className="bg-white rounded-xl p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${orderStatusColor[order.status] || 'bg-stone-100 text-stone-600'}`}>
-                        {order.status}
-                      </span>
-                      <div>
+
+                  {/* Header commande */}
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${orderStatusColor[order.status] || 'bg-stone-100 text-stone-600'}`}>
+                          {order.status}
+                        </span>
                         <p className="font-bold text-yellow-600 text-sm">#{order.order_ref}</p>
-                        <p className="text-xs text-stone-400">
-                          {new Date(order.created_at).toLocaleDateString('fr-FR')} à {new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                        </p>
                       </div>
+                      {order.customer_name && (
+                        <p className="text-sm font-medium text-stone-800">{order.customer_name}</p>
+                      )}
+                      {order.customer_phone && (
+                        <a href={`https://wa.me/${order.customer_phone.replace(/\D/g, '')}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-xs text-green-600 hover:underline">
+                          📱 {order.customer_phone}
+                        </a>
+                      )}
+                      <p className="text-xs text-stone-400 mt-1">
+                        {new Date(order.created_at).toLocaleDateString('fr-FR')} à {new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-bold text-stone-800">{formatFCFA(order.total)}</p>
+                      <p className="font-bold text-stone-800 text-lg">{formatFCFA(order.total)}</p>
                       <p className="text-xs text-stone-400">{order.delivery_zone}</p>
                     </div>
                   </div>
 
                   {/* Articles */}
                   <div className="bg-stone-50 rounded-lg p-3 mb-3">
+                    <p className="text-xs font-medium text-stone-500 mb-2 uppercase tracking-wide">Articles</p>
                     {order.items?.map((item: any, i: number) => (
-                      <div key={i} className="flex justify-between text-xs py-1">
-                        <span className="text-stone-600">{item.name} x{item.quantity}</span>
-                        <span className="text-stone-800 font-medium">{formatFCFA(item.price * item.quantity)}</span>
+                      <div key={i} className="flex justify-between items-start text-xs py-1.5 border-b border-stone-100 last:border-0">
+                        <div>
+                          <p className="text-stone-700 font-medium">{item.name}</p>
+                          <p className="text-stone-400 font-mono">
+                            {item.isCustom ? 'CJS-CUSTOM' : item.barcode || item.id}
+                          </p>
+                          <p className="text-stone-400">{item.variant} · x{item.quantity}</p>
+                        </div>
+                        <p className="text-stone-800 font-medium ml-4">{formatFCFA(item.price * item.quantity)}</p>
                       </div>
                     ))}
-                    {order.discount > 0 && (
-                      <div className="flex justify-between text-xs py-1 text-green-600">
-                        <span>Réduction {order.coupon_code && `(${order.coupon_code})`}</span>
-                        <span>-{formatFCFA(order.discount)}</span>
+                    <div className="mt-2 pt-2 border-t border-stone-200 space-y-1">
+                      {order.discount > 0 && (
+                        <div className="flex justify-between text-xs text-green-600">
+                          <span>Réduction {order.coupon_code && `(${order.coupon_code})`}</span>
+                          <span>-{formatFCFA(order.discount)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xs text-stone-500">
+                        <span>Livraison — {order.delivery_zone}</span>
+                        <span>{order.delivery_fee === 0 ? 'Gratuite' : formatFCFA(order.delivery_fee)}</span>
                       </div>
-                    )}
-                    <div className="flex justify-between text-xs py-1 border-t border-stone-200 mt-1">
-                      <span className="text-stone-500">Livraison {order.delivery_zone}</span>
-                      <span>{order.delivery_fee === 0 ? 'Gratuite' : formatFCFA(order.delivery_fee)}</span>
+                      <div className="flex justify-between text-sm font-bold text-stone-800 pt-1">
+                        <span>Total</span>
+                        <span>{formatFCFA(order.total)}</span>
+                      </div>
                     </div>
                   </div>
 
                   {/* Changer statut */}
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-stone-400 mr-1">Statut :</p>
-                    {['commandé', 'en preparation', 'en livraison', 'livré', 'annulé'].map(status => (
-                      <button
-                        key={status}
-                        onClick={() => updateOrderStatus(order.id, status)}
-                        className={`text-xs px-2 py-1 rounded-full border transition-colors ${order.status === status ? 'bg-stone-800 text-white border-stone-800' : 'border-stone-200 text-stone-500 hover:border-stone-400'}`}
-                      >
-                        {status}
-                      </button>
-                    ))}
+                  <div>
+                    <p className="text-xs text-stone-400 mb-2">Mettre à jour le statut :</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {['commandé', 'en preparation', 'en livraison', 'livré', 'annulé'].map(status => (
+                        <button
+                          key={status}
+                          onClick={() => updateOrderStatus(order.id, status, order)}
+                          className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                            order.status === status
+                              ? 'bg-stone-800 text-white border-stone-800'
+                              : 'border-stone-200 text-stone-500 hover:border-stone-400 hover:text-stone-700'
+                          }`}
+                        >
+                          {status === 'livré' ? '✓ livré' : status}
+                        </button>
+                      ))}
+                    </div>
+                    {order.status === 'livré' && (
+                      <p className="text-xs text-green-600 mt-2">✓ Vente enregistrée dans le chiffre d'affaires</p>
+                    )}
                   </div>
                 </div>
               ))}
