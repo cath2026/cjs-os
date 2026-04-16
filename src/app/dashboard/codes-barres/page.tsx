@@ -172,8 +172,7 @@ export default function CodesBarresPage() {
         </button>
       </div>
 
-      <div className="flex gap-3 mb-4">
-        <div className="flex-1 relative">
+<div className="flex flex-col sm:flex-row gap-3 mb-4">        <div className="flex-1 relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
           <input
             value={search}
@@ -194,16 +193,16 @@ export default function CodesBarresPage() {
         </select>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full">
+      <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
+        <table className="w-full min-w-[600px]">
           <thead>
             <tr className="border-b border-stone-100">
-              <th className="text-left px-5 py-3 text-xs font-semibold text-stone-500 uppercase">Code-Barres</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-stone-500 uppercase">Produit</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-stone-500 uppercase">Variante</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-stone-500 uppercase">Catégorie</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-stone-500 uppercase">Prix</th>
-              <th className="text-left px-5 py-3 text-xs font-semibold text-stone-500 uppercase">Actions</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-stone-500 uppercase">Code-Barres</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-stone-500 uppercase">Produit</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-stone-500 uppercase">Variante</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-stone-500 uppercase">Catégorie</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-stone-500 uppercase">Prix</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-stone-500 uppercase">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
