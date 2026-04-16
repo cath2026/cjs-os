@@ -105,8 +105,7 @@ export default function CategoriesPage() {
       {loading ? (
         <p className="text-stone-400">Chargement...</p>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
-          {categories.map((cat) => (
+<div className="grid grid-cols-2 lg:grid-cols-3 gap-4">          {categories.map((cat) => (
             <div key={cat.id} className="bg-white rounded-xl p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-3">
                 <Tag size={16} className="text-yellow-600" />
@@ -138,8 +137,7 @@ export default function CategoriesPage() {
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+<div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4">          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <h2 className="text-lg font-semibold text-stone-800 mb-4">
               {editing ? 'Modifier la catégorie' : 'Nouvelle catégorie'}
             </h2>
