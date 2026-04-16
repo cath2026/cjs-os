@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Plus, Trash2, Image, RefreshCw } from 'lucide-react'
+import { Plus, Trash2, Image, RefreshCw, Search } from 'lucide-react'
 
 type Category = { id: string; name: string; prefix: string; next_ref_number: number }
 type Variant = { id: string; name: string; sale_price: number; cost_price: number; stock_quantity: number; barcode?: string }
@@ -24,6 +24,8 @@ export default function ProduitsPage() {
   const [showModal, setShowModal] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+  const [selectedCat, setSelectedCat] = useState('all')
   const [form, setForm] = useState({ name: '', nameen: '', category_id: '', description: '' })
   const [variants, setVariants] = useState([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
   const [imageFile1, setImageFile1] = useState<File | null>(null)
@@ -94,32 +96,22 @@ export default function ProduitsPage() {
     if (newQty < 0) return
     const { data: { user } } = await supabase.auth.getUser()
     const { data: empData } = await supabase.from('employees').select('id').eq('auth_user_id', user?.id).single()
-
     await supabase.from('variants').update({ stock_quantity: newQty, updated_at: new Date().toISOString() }).eq('id', variantId)
-
     await supabase.from('stock_movements').insert({
-      shop_id: SHOP_ID,
-      variant_id: variantId,
-      employee_id: empData?.id,
-      movement_type: 'adjustment',
-      quantity_change: newQty - currentQty,
-      quantity_before: currentQty,
-      quantity_after: newQty,
-      notes: 'Ajustement manuel',
+      shop_id: SHOP_ID, variant_id: variantId, employee_id: empData?.id,
+      movement_type: 'adjustment', quantity_change: newQty - currentQty,
+      quantity_before: currentQty, quantity_after: newQty, notes: 'Ajustement manuel',
     })
-
     const { data: allVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', productId)
     const totalStock = (allVariants || []).reduce((sum, v) => sum + v.stock_quantity, 0)
     await supabase.from('products').update({ stock: totalStock }).eq('id', productId)
-
     fetchProducts()
   }
 
   const handleSave = async () => {
     if (!form.name || !form.category_id) { setError('Nom et catégorie obligatoires'); return }
     if (variants.some(v => !v.name)) { setError('Chaque variante doit avoir un nom'); return }
-    setSaving(true)
-    setError('')
+    setSaving(true); setError('')
 
     const cat = categories.find(c => c.id === form.category_id)
     if (!cat) { setError('Catégorie introuvable'); setSaving(false); return }
@@ -130,19 +122,8 @@ export default function ProduitsPage() {
 
     const { data: product, error: productError } = await supabase
       .from('products')
-      .insert({
-        shop_id: SHOP_ID,
-        name: form.name,
-        nameen: form.nameen,
-        category_id: form.category_id,
-        description: form.description,
-        stock: totalStock,
-        price: minPrice,
-        barcode: firstBarcode,
-        is_active: true,
-      })
-      .select()
-      .single()
+      .insert({ shop_id: SHOP_ID, name: form.name, nameen: form.nameen, category_id: form.category_id, description: form.description, stock: totalStock, price: minPrice, barcode: firstBarcode, is_active: true })
+      .select().single()
 
     if (productError || !product) { setError('Erreur lors de la création'); setSaving(false); return }
 
@@ -153,22 +134,14 @@ export default function ProduitsPage() {
     if (Object.keys(imageUrls).length > 0) await supabase.from('products').update(imageUrls).eq('id', product.id)
 
     for (let i = 0; i < variants.length; i++) {
-      const refNum = cat.next_ref_number + i
-      const barcode = `CJS-${cat.prefix}-${String(refNum).padStart(4, '0')}`
-      await supabase.from('variants').insert({
-        shop_id: SHOP_ID, product_id: product.id, name: variants[i].name,
-        sale_price: variants[i].sale_price, cost_price: variants[i].cost_price,
-        stock_quantity: variants[i].stock_quantity, barcode,
-      })
-      await supabase.from('barcodes').insert({
-        shop_id: SHOP_ID, product_id: product.id, barcode_value: barcode, category_code: cat.prefix,
-      })
+      const barcode = `CJS-${cat.prefix}-${String(cat.next_ref_number + i).padStart(4, '0')}`
+      await supabase.from('variants').insert({ shop_id: SHOP_ID, product_id: product.id, name: variants[i].name, sale_price: variants[i].sale_price, cost_price: variants[i].cost_price, stock_quantity: variants[i].stock_quantity, barcode })
+      await supabase.from('barcodes').insert({ shop_id: SHOP_ID, product_id: product.id, barcode_value: barcode, category_code: cat.prefix })
     }
 
     await supabase.from('categories').update({ next_ref_number: cat.next_ref_number + variants.length }).eq('id', cat.id)
 
-    setSaving(false)
-    setShowModal(false)
+    setSaving(false); setShowModal(false)
     setForm({ name: '', nameen: '', category_id: '', description: '' })
     setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
     setImageFile1(null); setImageFile2(null); setImageFile3(null)
@@ -184,17 +157,43 @@ export default function ProduitsPage() {
 
   const formatFCFA = (amount: number) => new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
 
+  const filtered = products
+    .filter(p => selectedCat === 'all' || p.category?.prefix === selectedCat)
+    .filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || (p.nameen || '').toLowerCase().includes(search.toLowerCase()))
+
   return (
-    <div className="p-4">
+    <div className="p-3 lg:p-5">
+      <style>{`
+        .products-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 10px;
+        }
+        @media (max-width: 1024px) {
+          .products-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 640px) {
+          .products-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        }
+        .cats-scroll { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+        .cats-scroll::-webkit-scrollbar { height: 2px; }
+        .cats-scroll::-webkit-scrollbar-thumb { background: #ca8a04; border-radius: 2px; }
+        .cat-btn { padding: 4px 10px; border-radius: 50px; font-size: 11px; white-space: nowrap; border: 1px solid #e7e5e4; background: white; cursor: pointer; transition: all 0.15s; color: #57534e; }
+        .cat-btn:hover { border-color: #ca8a04; color: #ca8a04; }
+        .cat-btn.active { background: #1c1917; color: white; border-color: #1c1917; }
+        .stock-btn { width: 20px; height: 20px; border-radius: 4px; border: 1px solid #e7e5e4; background: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; color: #57534e; transition: background 0.15s; }
+        .stock-btn:hover { background: #f5f5f4; }
+      `}</style>
+
       {/* HEADER */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div>
-          <h1 className="text-xl font-semibold text-stone-800">Produits & Stock</h1>
-          <p className="text-stone-500 text-xs">{products.length} produits actifs</p>
+          <h1 className="text-lg font-semibold text-stone-800">Produits & Stock</h1>
+          <p className="text-stone-400 text-xs">{filtered.length} / {products.length} produits</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { fetchProducts(); fetchCategories() }} className="flex items-center gap-1 border border-stone-300 text-stone-600 px-3 py-2 rounded-lg text-xs hover:bg-stone-50">
-            <RefreshCw size={13} />
+          <button onClick={() => { fetchProducts(); fetchCategories() }} className="p-2 border border-stone-300 text-stone-500 rounded-lg hover:bg-stone-50">
+            <RefreshCw size={14} />
           </button>
           <button
             onClick={() => {
@@ -202,100 +201,101 @@ export default function ProduitsPage() {
               setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
               setImageFile1(null); setImageFile2(null); setImageFile3(null)
               setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
-              setError('')
-              setShowModal(true)
+              setError(''); setShowModal(true)
             }}
             className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-xs font-medium"
           >
-            <Plus size={14} /> Nouveau
+            <Plus size={13} /> Nouveau
           </button>
         </div>
       </div>
 
+      {/* RECHERCHE */}
+      <div className="relative mb-2">
+        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Rechercher un produit..."
+          className="w-full border border-stone-200 rounded-lg pl-8 pr-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400"
+        />
+      </div>
+
+      {/* FILTRE CATÉGORIES */}
+      <div className="cats-scroll mb-3">
+        <button onClick={() => setSelectedCat('all')} className={`cat-btn${selectedCat === 'all' ? ' active' : ''}`}>Tous</button>
+        {categories.map(cat => (
+          <button key={cat.id} onClick={() => setSelectedCat(cat.prefix)} className={`cat-btn${selectedCat === cat.prefix ? ' active' : ''}`}>
+            {cat.name}
+          </button>
+        ))}
+      </div>
+
+      {/* GRILLE PRODUITS */}
       {loading ? (
         <p className="text-stone-400 text-sm">Chargement...</p>
-      ) : products.length === 0 ? (
-        <div className="bg-white rounded-xl p-12 shadow-sm flex flex-col items-center justify-center">
-          <p className="text-stone-400 font-medium text-sm">Aucun produit enregistré</p>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-xl p-10 text-center">
+          <p className="text-stone-400 text-sm">Aucun produit trouvé</p>
         </div>
       ) : (
-        // GRILLE 2 COLONNES
-<div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>          {products.map((product) => (
-            <div key={product.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="products-grid">
+          {filtered.map((product) => (
+            <div key={product.id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-stone-100">
 
               {/* IMAGE PRINCIPALE */}
               <div className="relative">
                 {product.image_url ? (
-                  <img src={product.image_url} alt={product.name} className="w-full h-36 object-cover" />
+                  <img src={product.image_url} alt={product.name} className="w-full aspect-square object-cover" />
                 ) : (
-                  <div className="w-full h-36 bg-stone-100 flex items-center justify-center">
-                    <Image size={28} className="text-stone-300" />
+                  <div className="w-full aspect-square bg-stone-100 flex items-center justify-center">
+                    <Image size={24} className="text-stone-300" />
                   </div>
                 )}
-                <button
-                  onClick={() => handleDelete(product.id)}
-                  className="absolute top-2 right-2 p-1.5 bg-white/90 text-red-400 hover:bg-red-50 rounded-lg shadow-sm"
-                >
-                  <Trash2 size={12} />
+                <button onClick={() => handleDelete(product.id)} className="absolute top-1.5 right-1.5 p-1 bg-white/90 text-red-400 rounded-lg shadow-sm hover:bg-red-50">
+                  <Trash2 size={11} />
                 </button>
               </div>
 
-              <div className="p-3">
-                {/* NOM + CATÉGORIE */}
-                <div className="mb-2">
-                  <h3 className="font-semibold text-stone-800 text-sm leading-tight">{product.name}</h3>
-                  {product.nameen && <p className="text-xs text-stone-400 italic">{product.nameen}</p>}
-                  <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full mt-1 inline-block">
-                    {product.category?.name}
-                  </span>
-                </div>
+              <div className="p-2">
+                {/* NOM */}
+                <p className="font-semibold text-stone-800 text-xs leading-tight truncate">{product.name}</p>
+                {product.nameen && <p className="text-stone-400 text-xs italic truncate">{product.nameen}</p>}
+                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full mt-0.5 inline-block">{product.category?.name}</span>
 
                 {/* IMAGES SECONDAIRES */}
                 {(product.image_url_2 || product.image_url_3) && (
-                  <div className="flex gap-1.5 mb-2">
-                    {product.image_url_2 && (
-                      <img src={product.image_url_2} alt="" className="w-10 h-10 object-cover rounded-lg border border-stone-100" />
-                    )}
-                    {product.image_url_3 && (
-                      <img src={product.image_url_3} alt="" className="w-10 h-10 object-cover rounded-lg border border-stone-100" />
-                    )}
+                  <div className="flex gap-1 mt-1.5">
+                    {product.image_url_2 && <img src={product.image_url_2} alt="" className="w-8 h-8 object-cover rounded border border-stone-100" />}
+                    {product.image_url_3 && <img src={product.image_url_3} alt="" className="w-8 h-8 object-cover rounded border border-stone-100" />}
                   </div>
                 )}
 
-                {/* BARCODE PRODUIT */}
-                <p className="text-xs font-mono text-stone-400 mb-2">{product.barcode}</p>
+                {/* BARCODE */}
+                <p className="text-xs font-mono text-stone-400 mt-1 truncate">{product.barcode}</p>
 
                 {/* VARIANTES */}
-                <div className="space-y-1.5">
+                <div className="mt-1.5 space-y-1">
                   {product.variants?.map((v) => (
-                    <div key={v.id} className="bg-stone-50 rounded-lg p-2">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-stone-700">{v.name}</span>
-                        <span className="text-xs font-bold text-yellow-600">{formatFCFA(v.sale_price)}</span>
+                    <div key={v.id} className="bg-stone-50 rounded-lg p-1.5">
+                      <div className="flex justify-between items-center mb-0.5">
+                        <span className="text-xs font-medium text-stone-700 truncate flex-1">{v.name}</span>
+                        <span className="text-xs font-bold text-yellow-600 ml-1 flex-shrink-0">{formatFCFA(v.sale_price)}</span>
                       </div>
-                      <p className="text-xs font-mono text-stone-400 mb-1">{v.barcode}</p>
+                      <p className="text-xs font-mono text-stone-400 truncate mb-1">{v.barcode}</p>
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity, product.id)}
-                          className="w-6 h-6 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-stone-600 font-bold text-sm"
-                        >-</button>
-                        <span className={`text-xs font-bold w-6 text-center ${v.stock_quantity === 0 ? 'text-red-500' : 'text-stone-700'}`}>
-                          {v.stock_quantity}
-                        </span>
-                        <button
-                          onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity, product.id)}
-                          className="w-6 h-6 rounded bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-stone-600 font-bold text-sm"
-                        >+</button>
-                        <span className="text-xs text-stone-400 ml-1">stock</span>
+                        <button onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity, product.id)} className="stock-btn">-</button>
+                        <span className={`text-xs font-bold w-5 text-center ${v.stock_quantity === 0 ? 'text-red-500' : 'text-stone-700'}`}>{v.stock_quantity}</span>
+                        <button onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity, product.id)} className="stock-btn">+</button>
                       </div>
                     </div>
                   ))}
                 </div>
 
                 {/* STOCK TOTAL */}
-                <div className="mt-2 pt-2 border-t border-stone-100 flex justify-between text-xs text-stone-400">
-                  <span>Total stock: <strong className={`${(product.stock || 0) === 0 ? 'text-red-500' : 'text-stone-600'}`}>{product.stock || 0}</strong></span>
-                  <span>{formatFCFA(product.price || 0)}</span>
+                <div className="mt-1.5 pt-1.5 border-t border-stone-100 flex justify-between text-xs">
+                  <span className="text-stone-400">Total: <strong className={product.stock === 0 ? 'text-red-500' : 'text-stone-600'}>{product.stock || 0}</strong></span>
+                  <span className="text-stone-500 font-medium">{formatFCFA(product.price || 0)}</span>
                 </div>
               </div>
             </div>
@@ -305,11 +305,11 @@ export default function ProduitsPage() {
 
       {/* MODAL CRÉATION */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-lg shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-semibold text-stone-800">Nouveau produit</h2>
-              <button onClick={() => setShowModal(false)} className="text-stone-400 hover:text-stone-600">✕</button>
+              <button onClick={() => setShowModal(false)} className="text-stone-400 hover:text-stone-600 text-xl">✕</button>
             </div>
 
             {/* 3 IMAGES */}
@@ -322,19 +322,11 @@ export default function ProduitsPage() {
                   { slot: 3 as const, preview: imagePreview3, ref: fileInputRef3 },
                 ]).map(({ slot, preview, ref }) => (
                   <div key={slot}>
-                    <div
-                      onClick={() => ref.current?.click()}
-                      className="border-2 border-dashed border-stone-300 rounded-xl cursor-pointer hover:border-yellow-400 transition-colors overflow-hidden"
-                      style={{ height: '80px' }}
-                    >
-                      {preview ? (
-                        <img src={preview} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="flex flex-col items-center justify-center h-full">
-                          <Image size={16} className="text-stone-300 mb-1" />
-                          <p className="text-xs text-stone-400">{slot}</p>
-                        </div>
-                      )}
+                    <div onClick={() => ref.current?.click()} className="border-2 border-dashed border-stone-300 rounded-xl cursor-pointer hover:border-yellow-400 overflow-hidden" style={{ height: '80px' }}>
+                      {preview
+                        ? <img src={preview} alt="" className="w-full h-full object-cover" />
+                        : <div className="flex flex-col items-center justify-center h-full"><Image size={16} className="text-stone-300 mb-1" /><p className="text-xs text-stone-400">{slot}</p></div>
+                      }
                     </div>
                     <input ref={ref} type="file" accept="image/*" onChange={(e) => handleImageChange(e, slot)} className="hidden" />
                   </div>
@@ -370,7 +362,7 @@ export default function ProduitsPage() {
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-xs font-semibold text-stone-700">Variantes</h3>
-                <button onClick={addVariant} className="text-xs text-yellow-600 hover:text-yellow-700 font-medium">+ Ajouter</button>
+                <button onClick={addVariant} className="text-xs text-yellow-600 font-medium">+ Ajouter</button>
               </div>
               {variants.map((variant, index) => (
                 <div key={index} className="border border-stone-200 rounded-lg p-3 mb-2">
