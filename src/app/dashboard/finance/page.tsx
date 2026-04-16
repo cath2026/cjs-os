@@ -2,642 +2,559 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Printer, Send, X, Plus, Trash2 } from 'lucide-react'
-
-type Sale = {
-  id: string
-  status: string
-  total: number
-  subtotal: number
-  discount_amount: number
-  discount_type?: string
-  discount_value: number
-  customer_name?: string
-  acquisition_source?: string
-  payment_method?: string
-  notes?: string
-  paid_at?: string
-  created_at: string
-  customer?: { id: string; full_name: string; phone?: string }
-  employee?: { full_name: string }
-  sale_items: {
-    id: string
-    product_name: string
-    variant_name?: string
-    quantity: number
-    unit_price: number
-    unit_cost: number
-    total_price: number
-    variant_id?: string
-    product_id?: string
-  }[]
-}
-
-type Variant = {
-  id: string
-  name: string
-  sale_price: number
-  cost_price: number
-  stock_quantity: number
-  barcode?: string
-  product: { id: string; name: string }
-}
+import { Plus, X, TrendingUp, DollarSign, ShoppingBag, Percent, Download, Eye, Share2, AlertTriangle, Check } from 'lucide-react'
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
-export default function VenteDetailPage() {
+type Charge = { id: string; name: string; amount: number; category: string; is_active: boolean }
+type Repartition = { id: string; name: string; percentage: number; is_active: boolean }
+type Cycle = {
+  id: string; start_date: string; end_date?: string; status: string
+  ca_brut: number; ca_net: number; cout_revient: number; marge_brute: number
+  charges_fixes_total: number; benefice_net: number; notes?: string
+}
+
+export default function FinancePage() {
   const supabase = createClient()
-  const router = useRouter()
-  const params = useParams()
-  const id = params.id as string
-
-  const [sale, setSale] = useState<Sale | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showCancelModal, setShowCancelModal] = useState(false)
-  const [showReceiptModal, setShowReceiptModal] = useState(false)
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [cancelReason, setCancelReason] = useState('')
+  const [activeCycle, setActiveCycle] = useState<Cycle | null>(null)
+  const [closedCycles, setClosedCycles] = useState<Cycle[]>([])
+  const [charges, setCharges] = useState<Charge[]>([])
+  const [repartition, setRepartition] = useState<Repartition[]>([])
+  const [salesData, setSalesData] = useState({ ca_brut: 0, ca_net: 0, cout_revient: 0, nb_ventes: 0 })
+  const [showChargeModal, setShowChargeModal] = useState(false)
+  const [showRepartModal, setShowRepartModal] = useState(false)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+  const [editingCharge, setEditingCharge] = useState<Charge | null>(null)
+  const [editingRepart, setEditingRepart] = useState<Repartition | null>(null)
+  const [chargeForm, setChargeForm] = useState({ name: '', amount: 0, category: 'autre' })
+  const [repartForm, setRepartForm] = useState({ name: '', percentage: 0 })
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [allVariants, setAllVariants] = useState<Variant[]>([])
-  const [showProductSearch, setShowProductSearch] = useState(false)
-  const [productSearch, setProductSearch] = useState('')
+  const [selectedCycle, setSelectedCycle] = useState<Cycle | null>(null)
+  const [cycleVentes, setCycleVentes] = useState<any[]>([])
+  const [showCycleDetail, setShowCycleDetail] = useState(false)
 
-  const [editCart, setEditCart] = useState<Sale['sale_items']>([])
-  const [editCustomerName, setEditCustomerName] = useState('')
-  const [editSource, setEditSource] = useState('')
-  const [editPayment, setEditPayment] = useState('')
-  const [editDiscountType, setEditDiscountType] = useState('')
-  const [editDiscountValue, setEditDiscountValue] = useState(0)
-  const [editNotes, setEditNotes] = useState('')
-  const [editReason, setEditReason] = useState('')
+  const fetchAll = async () => {
+    // Cycles
+    const { data: cycles } = await supabase
+      .from('finance_cycles')
+      .select('*')
+      .eq('shop_id', SHOP_ID)
+      .order('created_at', { ascending: false })
 
-  const fetchSale = async () => {
-    const { data } = await supabase
-      .from('sales')
-      .select('*, customer:customers(id, full_name, phone), employee:employees(full_name), sale_items(*)')
-      .eq('id', id)
-      .single()
-    setSale(data)
+    const active = cycles?.find(c => c.status === 'active') || null
+    const closed = cycles?.filter(c => c.status === 'closed') || []
+    setActiveCycle(active)
+    setClosedCycles(closed)
+
+    // Charges
+    const { data: ch } = await supabase
+      .from('finance_charges')
+      .select('*')
+      .eq('shop_id', SHOP_ID)
+      .eq('is_active', true)
+      .order('category')
+    setCharges(ch || [])
+
+    // Répartition
+    const { data: rp } = await supabase
+      .from('finance_repartition')
+      .select('*')
+      .eq('shop_id', SHOP_ID)
+      .eq('is_active', true)
+    setRepartition(rp || [])
+
+    // Ventes du cycle actif
+    if (active) {
+      const { data: sales } = await supabase
+        .from('sales')
+        .select('*, sale_items(*)')
+        .eq('shop_id', SHOP_ID)
+        .eq('status', 'paid')
+        .gte('created_at', active.start_date)
+        .order('created_at', { ascending: false })
+
+      const ca_brut = sales?.reduce((s, v) => s + v.total, 0) || 0
+      const ca_net = ca_brut - (sales?.reduce((s, v) => s + (v.discount_amount || 0), 0) || 0)
+      const cout_revient = sales?.reduce((s, v) =>
+        s + v.sale_items.reduce((si: number, i: any) => si + (i.unit_cost || 0) * i.quantity, 0), 0) || 0
+
+      setSalesData({ ca_brut, ca_net, cout_revient, nb_ventes: sales?.length || 0 })
+    } else {
+      setSalesData({ ca_brut: 0, ca_net: 0, cout_revient: 0, nb_ventes: 0 })
+    }
+
     setLoading(false)
   }
 
-  const fetchVariants = async () => {
+  useEffect(() => { fetchAll() }, [])
+
+  // Calculs
+  const totalCharges = charges.reduce((s, c) => s + c.amount, 0)
+  const marge_brute = salesData.ca_net - salesData.cout_revient
+  const benefice_net = Math.max(0, marge_brute - totalCharges)
+  const repartTotal = repartition.reduce((s, r) => s + r.percentage, 0)
+
+  const formatFCFA = (n: number) => new Intl.NumberFormat('fr-FR').format(Math.round(n)) + ' FCFA'
+  const formatDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+
+  // CYCLE
+  const handleStartCycle = async () => {
     const { data } = await supabase
-      .from('variants')
-      .select('*, product:products(id, name)')
+      .from('finance_cycles')
+      .insert({ shop_id: SHOP_ID, start_date: new Date().toISOString().split('T')[0], status: 'active' })
+      .select().single()
+    setActiveCycle(data)
+    fetchAll()
+  }
+
+  const handleCloseCycle = async () => {
+    if (!activeCycle) return
+    setSaving(true)
+    await supabase.from('finance_cycles').update({
+      status: 'closed',
+      end_date: new Date().toISOString().split('T')[0],
+      ca_brut: salesData.ca_brut,
+      ca_net: salesData.ca_net,
+      cout_revient: salesData.cout_revient,
+      marge_brute,
+      charges_fixes_total: totalCharges,
+      benefice_net,
+    }).eq('id', activeCycle.id)
+    setSaving(false)
+    setShowCloseConfirm(false)
+    fetchAll()
+  }
+
+  // CHARGES
+  const handleSaveCharge = async () => {
+    if (!chargeForm.name || chargeForm.amount <= 0) return
+    setSaving(true)
+    if (editingCharge) {
+      await supabase.from('finance_charges').update({ name: chargeForm.name, amount: chargeForm.amount, category: chargeForm.category }).eq('id', editingCharge.id)
+    } else {
+      await supabase.from('finance_charges').insert({ shop_id: SHOP_ID, name: chargeForm.name, amount: chargeForm.amount, category: chargeForm.category })
+    }
+    setSaving(false)
+    setShowChargeModal(false)
+    setEditingCharge(null)
+    setChargeForm({ name: '', amount: 0, category: 'autre' })
+    fetchAll()
+  }
+
+  const handleDeleteCharge = async (id: string) => {
+    await supabase.from('finance_charges').update({ is_active: false }).eq('id', id)
+    fetchAll()
+  }
+
+  // RÉPARTITION
+  const handleSaveRepart = async () => {
+    if (!repartForm.name || repartForm.percentage <= 0) return
+    if (repartTotal + repartForm.percentage > 100 && !editingRepart) return
+    setSaving(true)
+    if (editingRepart) {
+      await supabase.from('finance_repartition').update({ name: repartForm.name, percentage: repartForm.percentage }).eq('id', editingRepart.id)
+    } else {
+      await supabase.from('finance_repartition').insert({ shop_id: SHOP_ID, name: repartForm.name, percentage: repartForm.percentage })
+    }
+    setSaving(false)
+    setShowRepartModal(false)
+    setEditingRepart(null)
+    setRepartForm({ name: '', percentage: 0 })
+    fetchAll()
+  }
+
+  const handleDeleteRepart = async (id: string) => {
+    await supabase.from('finance_repartition').update({ is_active: false }).eq('id', id)
+    fetchAll()
+  }
+
+  // DÉTAIL CYCLE
+  const handleViewCycle = async (cycle: Cycle) => {
+    setSelectedCycle(cycle)
+    const { data } = await supabase
+      .from('sales')
+      .select('*, sale_items(*)')
       .eq('shop_id', SHOP_ID)
-      .eq('is_active', true)
-    setAllVariants(data || [])
+      .eq('status', 'paid')
+      .gte('created_at', cycle.start_date)
+      .lte('created_at', cycle.end_date || new Date().toISOString())
+    setCycleVentes(data || [])
+    setShowCycleDetail(true)
   }
 
-  useEffect(() => {
-    fetchSale()
-    fetchVariants()
-  }, [id])
-
-  const canEdit = () => {
-    if (!sale || sale.status !== 'paid' || !sale.paid_at) return false
-    const paidAt = new Date(sale.paid_at)
-    const now = new Date()
-    const diffHours = (now.getTime() - paidAt.getTime()) / (1000 * 60 * 60)
-    return diffHours <= 48
+  const handleDownloadCycle = async (cycle: Cycle) => {
+    await handleViewCycle(cycle)
+    setTimeout(() => {
+      const content = `
+RAPPORT FINANCIER — CATH JEWELRY STORE
+Cycle: ${formatDate(cycle.start_date)} → ${formatDate(cycle.end_date || '')}
+=====================================
+CA Brut: ${formatFCFA(cycle.ca_brut)}
+CA Net: ${formatFCFA(cycle.ca_net)}
+Coût de revient: ${formatFCFA(cycle.cout_revient)}
+Marge brute: ${formatFCFA(cycle.marge_brute)}
+Charges fixes: ${formatFCFA(cycle.charges_fixes_total)}
+Bénéfice net: ${formatFCFA(cycle.benefice_net)}
+      `.trim()
+      const blob = new Blob([content], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `cycle-${cycle.start_date}.txt`
+      a.click()
+    }, 500)
   }
 
-  const openEditModal = () => {
-    if (!sale) return
-    setEditCart(sale.sale_items.map(i => ({ ...i })))
-    setEditCustomerName(sale.customer?.full_name || sale.customer_name || '')
-    setEditSource(sale.acquisition_source || '')
-    setEditPayment(sale.payment_method || '')
-    setEditDiscountType(sale.discount_type || '')
-    setEditDiscountValue(sale.discount_value || 0)
-    setEditNotes(sale.notes || '')
-    setEditReason('')
-    setShowEditModal(true)
+  const handleShareCycle = (cycle: Cycle) => {
+    const text = `Cycle CJS ${formatDate(cycle.start_date)} → ${formatDate(cycle.end_date || '')}\nCA: ${formatFCFA(cycle.ca_brut)}\nBénéfice: ${formatFCFA(cycle.benefice_net)}`
+    if (navigator.share) navigator.share({ title: 'Rapport CJS', text })
+    else navigator.clipboard.writeText(text).then(() => alert('Copié !'))
   }
 
-  const addToEditCart = (variant: Variant) => {
-    const existing = editCart.find(i => i.variant_id === variant.id)
-    if (existing) {
-      setEditCart(editCart.map(i =>
-        i.variant_id === variant.id ? { ...i, quantity: i.quantity + 1 } : i
-      ))
-    } else {
-      setEditCart([...editCart, {
-        id: '',
-        variant_id: variant.id,
-        product_id: variant.product.id,
-        product_name: variant.product.name,
-        variant_name: variant.name,
-        quantity: 1,
-        unit_price: variant.sale_price,
-        unit_cost: variant.cost_price,
-        total_price: variant.sale_price,
-      }])
-    }
-    setShowProductSearch(false)
-    setProductSearch('')
-  }
-
-  const updateEditQty = (variant_id: string, qty: number) => {
-    if (qty <= 0) {
-      setEditCart(editCart.filter(i => i.variant_id !== variant_id))
-    } else {
-      setEditCart(editCart.map(i => i.variant_id === variant_id ? { ...i, quantity: qty } : i))
-    }
-  }
-
-  const editSubtotal = editCart.reduce((sum, i) => sum + i.unit_price * i.quantity, 0)
-  const editDiscountAmount = editDiscountType === 'fixed'
-    ? editDiscountValue
-    : editDiscountType === 'percent'
-    ? (editSubtotal * editDiscountValue) / 100
-    : 0
-  const editTotal = editSubtotal - editDiscountAmount
-
-  const handleSaveEdit = async () => {
-    if (!editReason.trim()) {
-      setError('Le motif de modification est obligatoire')
-      return
-    }
-    if (editCart.length === 0) {
-      setError('La vente doit contenir au moins un article')
-      return
-    }
-    setSaving(true)
-    setError('')
-
-    await supabase
-      .from('sales')
-      .update({
-        customer_name: editCustomerName || null,
-        acquisition_source: editSource || null,
-        payment_method: editPayment || null,
-        subtotal: editSubtotal,
-        discount_type: editDiscountType || null,
-        discount_value: editDiscountValue,
-        discount_amount: editDiscountAmount,
-        total: editTotal,
-        notes: `${editNotes ? editNotes + ' | ' : ''}MODIFIÉ — Motif: ${editReason}`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-
-    await supabase.from('sale_items').delete().eq('sale_id', id)
-
-    await supabase.from('sale_items').insert(
-      editCart.map(item => ({
-        sale_id: id,
-        variant_id: item.variant_id || null,
-        product_id: item.product_id || null,
-        product_name: item.product_name,
-        variant_name: item.variant_name || null,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        unit_cost: item.unit_cost,
-        total_price: item.unit_price * item.quantity,
-      }))
-    )
-
-    await supabase.from('logs').insert({
-      shop_id: SHOP_ID,
-      action: `Vente modifiée sous 48h — Motif: ${editReason}`,
-      module: 'ventes',
-      reference_id: id,
-    })
-
-    setSaving(false)
-    setShowEditModal(false)
-    fetchSale()
-  }
-
-  const handleStatusChange = async (newStatus: string) => {
-    if (!sale) return
-    setSaving(true)
-
-    await supabase
-      .from('sales')
-      .update({
-        status: newStatus,
-        paid_at: newStatus === 'paid' ? new Date().toISOString() : sale.paid_at,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', sale.id)
-
-    await supabase.from('logs').insert({
-      shop_id: SHOP_ID,
-      action: `Changement statut vente: ${sale.status} → ${newStatus}`,
-      module: 'ventes',
-      reference_id: sale.id,
-    })
-
-    setSaving(false)
-    fetchSale()
-
-    if (newStatus === 'paid') {
-      setShowReceiptModal(true)
-    }
-  }
-
-  const handleCancel = async () => {
-    if (!cancelReason.trim()) {
-      setError('Le motif est obligatoire')
-      return
-    }
-    setSaving(true)
-
-    await supabase
-      .from('sales')
-      .update({
-        status: 'cancelled',
-        notes: `ANNULÉ — Motif: ${cancelReason}${sale?.notes ? ` | ${sale.notes}` : ''}`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-
-    await supabase.from('logs').insert({
-      shop_id: SHOP_ID,
-      action: `Vente annulée — Motif: ${cancelReason}`,
-      module: 'ventes',
-      reference_id: id,
-    })
-
-    setSaving(false)
-    setShowCancelModal(false)
-    fetchSale()
-  }
-
-  const handlePrint = () => {
-    if (!sale) return
-    const win = window.open('', '_blank')
-    if (!win) return
-    win.document.write(`
-      <html>
-        <head>
-          <title>Reçu — ${sale.customer?.full_name || sale.customer_name || 'Anonyme'}</title>
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Courier New', monospace; font-size: 12px; width: 80mm; margin: 0 auto; padding: 10px; }
-            .center { text-align: center; }
-            .bold { font-weight: bold; }
-            .divider { border-top: 1px dashed #000; margin: 8px 0; }
-            .row { display: flex; justify-content: space-between; margin: 3px 0; }
-            .total { font-size: 14px; font-weight: bold; }
-            .footer { text-align: center; margin-top: 10px; font-size: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="center bold" style="font-size:16px;">CATH JEWELRY STORE</div>
-          <div class="center">Bonamoussadi, Douala</div>
-          <div class="center">651207853</div>
-          <div class="divider"></div>
-          <div class="row">
-            <span>Date:</span>
-            <span>${new Date(sale.created_at).toLocaleDateString('fr-FR')}</span>
-          </div>
-          <div class="row">
-            <span>Client:</span>
-            <span>${sale.customer?.full_name || sale.customer_name || 'Anonyme'}</span>
-          </div>
-          ${sale.payment_method ? `<div class="row"><span>Paiement:</span><span>${sale.payment_method}</span></div>` : ''}
-          <div class="divider"></div>
-          ${sale.sale_items.map(item => `
-            <div class="row">
-              <span>${item.product_name} ${item.variant_name || ''}</span>
-              <span>${formatFCFA(item.total_price)}</span>
-            </div>
-            <div style="padding-left:10px; color:#666; font-size:11px;">x${item.quantity} × ${formatFCFA(item.unit_price)}</div>
-          `).join('')}
-          <div class="divider"></div>
-          ${sale.discount_amount > 0 ? `
-            <div class="row">
-              <span>Sous-total</span>
-              <span>${formatFCFA(sale.subtotal)}</span>
-            </div>
-            <div class="row" style="color:red;">
-              <span>Réduction</span>
-              <span>-${formatFCFA(sale.discount_amount)}</span>
-            </div>
-          ` : ''}
-          <div class="row total">
-            <span>TOTAL</span>
-            <span>${formatFCFA(sale.total)}</span>
-          </div>
-          <div class="divider"></div>
-          <div class="footer">Merci pour votre achat et à très bientôt !</div>
-          <script>window.onload = () => { window.print(); window.close(); }</script>
-        </body>
-      </html>
-    `)
-    win.document.close()
-  }
-
-  const handleWhatsApp = () => {
-    if (!sale) return
-    const customerPhone = sale.customer?.phone
-    const msg = encodeURIComponent(
-      `Reçu CJS — ${new Date(sale.created_at).toLocaleDateString('fr-FR')}\n` +
-      `Client: ${sale.customer?.full_name || sale.customer_name || 'Anonyme'}\n` +
-      sale.sale_items.map(i =>
-        `• ${i.product_name} ${i.variant_name || ''} x${i.quantity} = ${formatFCFA(i.total_price)}`
-      ).join('\n') +
-      `\nTotal: ${formatFCFA(sale.total)}\nMerci pour votre achat !`
-    )
-    const url = customerPhone
-      ? `https://wa.me/${customerPhone.replace(/\D/g, '')}?text=${msg}`
-      : `https://wa.me/?text=${msg}`
-    window.open(url, '_blank')
-  }
-
-  const formatFCFA = (amount: number) =>
-    new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
-
-  const statusLabel: Record<string, string> = {
-    draft: 'Brouillon',
-    in_delivery: 'En livraison',
-    paid: 'Payée',
-    cancelled: 'Annulée',
-  }
-
-  const statusColor: Record<string, string> = {
-    draft: 'bg-stone-100 text-stone-600',
-    in_delivery: 'bg-blue-100 text-blue-600',
-    paid: 'bg-green-100 text-green-600',
-    cancelled: 'bg-red-100 text-red-500',
-  }
-
-  const filteredVariants = allVariants.filter(v =>
-    v.product.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-    v.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-    v.barcode?.includes(productSearch)
-  )
+  const chargeCategories = ['salaire', 'loyer', 'factures', 'internet', 'marketing', 'autre']
 
   if (loading) return <div className="p-6 text-stone-400">Chargement...</div>
-  if (!sale) return <div className="p-6 text-stone-400">Vente introuvable</div>
 
   return (
-    <div className="p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => router.back()} className="p-2 hover:bg-stone-100 rounded-lg">
-          <ArrowLeft size={18} className="text-stone-600" />
-        </button>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-stone-800">Vente</h1>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor[sale.status]}`}>
-              {statusLabel[sale.status]}
-            </span>
-          </div>
-          <p className="text-stone-500 text-sm">
-            {new Date(sale.created_at).toLocaleDateString('fr-FR')} à{' '}
-            {new Date(sale.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-          </p>
-        </div>
+    <div className="p-4 lg:p-6 space-y-6">
+      <style>{`
+        .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+        .charge-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        .repart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        @media (max-width: 1024px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 640px) {
+          .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+          .charge-grid { grid-template-columns: 1fr; }
+          .repart-grid { grid-template-columns: 1fr; }
+        }
+      `}</style>
 
-        <div className="flex gap-2">
-          {sale.status === 'draft' && (
-            <>
-              <button onClick={() => handleStatusChange('in_delivery')} disabled={saving} className="border border-blue-300 hover:bg-blue-50 text-blue-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                → En livraison
-              </button>
-              <button onClick={() => { setCancelReason(''); setError(''); setShowCancelModal(true) }} className="border border-red-300 hover:bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                Annuler
-              </button>
-            </>
-          )}
-          {sale.status === 'in_delivery' && (
-            <>
-              <button onClick={() => handleStatusChange('paid')} disabled={saving} className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                Marquer payée
-              </button>
-              <button onClick={() => { setCancelReason(''); setError(''); setShowCancelModal(true) }} className="border border-red-300 hover:bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                Annuler
-              </button>
-            </>
-          )}
-          {sale.status === 'paid' && (
-            <>
-              <button onClick={() => setShowReceiptModal(true)} className="flex items-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                <Printer size={14} />
-                Reçu
-              </button>
-              {canEdit() && (
-                <button onClick={openEditModal} className="border border-yellow-300 hover:bg-yellow-50 text-yellow-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                  Modifier (48h)
-                </button>
-              )}
-            </>
-          )}
+      {/* HEADER */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-stone-800">Finance</h1>
+          <p className="text-stone-400 text-xs">Suivi financier de votre boutique</p>
         </div>
+        {!activeCycle && (
+          <button onClick={handleStartCycle} className="flex items-center gap-1.5 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+            <Plus size={14} /> Nouveau cycle
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl p-5 shadow-sm">
-          <h2 className="font-semibold text-stone-700 mb-3">Client</h2>
-          <p className="font-medium text-stone-800">
-            {sale.customer?.full_name || sale.customer_name || 'Client anonyme'}
-          </p>
-          {sale.customer?.phone && <p className="text-sm text-stone-400 mt-1">{sale.customer.phone}</p>}
-          {sale.acquisition_source && <p className="text-xs text-stone-400 mt-2">Source : {sale.acquisition_source}</p>}
-          {sale.payment_method && <p className="text-xs text-stone-400 mt-1">Paiement : {sale.payment_method}</p>}
-          {sale.employee && <p className="text-xs text-stone-400 mt-1">Vendeur : {sale.employee.full_name}</p>}
-          {sale.notes && <p className="text-xs text-stone-500 mt-3 italic">{sale.notes}</p>}
-          {sale.status === 'paid' && sale.paid_at && (
-            <div className="mt-3 pt-3 border-t border-stone-100">
-              {canEdit() ? (
-                <p className="text-xs text-green-600">✓ Modifiable encore</p>
-              ) : (
-                <p className="text-xs text-stone-400">Non modifiable (plus de 48h)</p>
-              )}
-            </div>
-          )}
+      {/* PAS DE CYCLE */}
+      {!activeCycle ? (
+        <div className="bg-white rounded-2xl p-10 shadow-sm text-center border border-dashed border-stone-200">
+          <DollarSign size={40} className="text-stone-300 mx-auto mb-3" />
+          <p className="text-stone-500 font-medium mb-1">Aucun cycle actif</p>
+          <p className="text-stone-400 text-sm mb-4">Démarrez un nouveau cycle pour suivre vos finances</p>
+          <button onClick={handleStartCycle} className="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-lg text-sm font-medium">
+            Démarrer un cycle
+          </button>
         </div>
+      ) : (
+        <>
+          {/* CYCLE ACTIF */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-yellow-100">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                  <p className="text-sm font-semibold text-stone-800">Cycle en cours</p>
+                </div>
+                <p className="text-xs text-stone-400">Depuis le {formatDate(activeCycle.start_date)} · {salesData.nb_ventes} vente(s)</p>
+              </div>
+              <button
+                onClick={() => setShowCloseConfirm(true)}
+                className="flex items-center gap-1.5 border border-red-300 hover:bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-xs font-medium"
+              >
+                Clôturer le cycle
+              </button>
+            </div>
+          </div>
 
-        <div className="col-span-2 bg-white rounded-xl p-5 shadow-sm">
-          <h2 className="font-semibold text-stone-700 mb-3">Articles</h2>
-          <div className="space-y-2 mb-4">
-            {sale.sale_items.map((item) => (
-              <div key={item.id} className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-stone-700">{item.product_name}</p>
-                  {item.variant_name && <p className="text-xs text-stone-400">{item.variant_name}</p>}
+          {/* KPI */}
+          <div className="kpi-grid">
+            {[
+              { label: 'CA Brut', value: salesData.ca_brut, icon: TrendingUp, color: 'text-blue-500', bg: 'bg-blue-50' },
+              { label: 'CA Net', value: salesData.ca_net, icon: DollarSign, color: 'text-green-500', bg: 'bg-green-50' },
+              { label: 'Marge Brute', value: marge_brute, icon: Percent, color: 'text-yellow-500', bg: 'bg-yellow-50' },
+              { label: 'Bénéfice Net', value: benefice_net, icon: ShoppingBag, color: 'text-purple-500', bg: 'bg-purple-50' },
+            ].map((kpi, i) => (
+              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`${kpi.bg} p-2 rounded-lg`}>
+                    <kpi.icon size={16} className={kpi.color} />
+                  </div>
+                  <p className="text-xs text-stone-400 font-medium">{kpi.label}</p>
                 </div>
-                <div className="flex gap-6 text-right">
-                  <span className="text-sm text-stone-400">x{item.quantity}</span>
-                  <span className="text-sm text-stone-500">{formatFCFA(item.unit_price)}</span>
-                  <span className="text-sm font-bold text-stone-800">{formatFCFA(item.total_price)}</span>
-                </div>
+                <p className="text-lg font-bold text-stone-800">{formatFCFA(kpi.value)}</p>
+                {i === 2 && salesData.ca_net > 0 && (
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    {Math.round((marge_brute / salesData.ca_net) * 100)}% du CA net
+                  </p>
+                )}
+                {i === 3 && marge_brute > 0 && (
+                  <p className={`text-xs mt-0.5 ${benefice_net > 0 ? 'text-green-500' : 'text-red-400'}`}>
+                    {benefice_net > 0 ? '✓ Après charges' : '⚠ Charges non couvertes'}
+                  </p>
+                )}
               </div>
             ))}
           </div>
 
-          <div className="border-t border-stone-100 pt-3 space-y-1">
-            <div className="flex justify-between text-sm text-stone-500">
-              <span>Sous-total</span>
-              <span>{formatFCFA(sale.subtotal)}</span>
+          {/* CHARGES FIXES */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-semibold text-stone-800">Charges fixes</h2>
+                <p className="text-xs text-stone-400">Total: {formatFCFA(totalCharges)}</p>
+              </div>
+              <button onClick={() => { setEditingCharge(null); setChargeForm({ name: '', amount: 0, category: 'autre' }); setShowChargeModal(true) }}
+                className="flex items-center gap-1 text-xs text-yellow-600 border border-yellow-300 px-2.5 py-1.5 rounded-lg font-medium">
+                <Plus size={12} /> Ajouter
+              </button>
             </div>
-            {sale.discount_amount > 0 && (
-              <div className="flex justify-between text-sm text-red-400">
-                <span>Réduction</span>
-                <span>-{formatFCFA(sale.discount_amount)}</span>
+
+            {charges.length === 0 ? (
+              <p className="text-stone-400 text-sm text-center py-4">Aucune charge définie</p>
+            ) : (
+              <div className="charge-grid">
+                {charges.map(charge => (
+                  <div key={charge.id} className="flex items-center justify-between bg-stone-50 rounded-xl p-3">
+                    <div>
+                      <p className="text-sm font-medium text-stone-700">{charge.name}</p>
+                      <p className="text-xs text-stone-400 capitalize">{charge.category}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-stone-800">{formatFCFA(charge.amount)}</p>
+                      <button onClick={() => { setEditingCharge(charge); setChargeForm({ name: charge.name, amount: charge.amount, category: charge.category }); setShowChargeModal(true) }}
+                        className="text-xs text-yellow-600 px-1.5 py-0.5 border border-yellow-200 rounded">
+                        ✎
+                      </button>
+                      <button onClick={() => handleDeleteCharge(charge.id)} className="text-xs text-red-400 px-1.5 py-0.5 border border-red-200 rounded">
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-            <div className="flex justify-between font-bold text-stone-800 text-lg">
-              <span>Total</span>
-              <span>{formatFCFA(sale.total)}</span>
+
+            {/* Jauge charges vs marge */}
+            {marge_brute > 0 && (
+              <div className="mt-4 pt-3 border-t border-stone-100">
+                <div className="flex justify-between text-xs text-stone-400 mb-1">
+                  <span>Charges ({Math.round((totalCharges / marge_brute) * 100)}% de la marge)</span>
+                  <span>{formatFCFA(totalCharges)} / {formatFCFA(marge_brute)}</span>
+                </div>
+                <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${totalCharges > marge_brute ? 'bg-red-400' : 'bg-yellow-400'}`}
+                    style={{ width: `${Math.min(100, (totalCharges / marge_brute) * 100)}%` }}
+                  />
+                </div>
+                {totalCharges > marge_brute && (
+                  <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                    <AlertTriangle size={11} /> Les charges dépassent la marge brute
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* RÉPARTITION */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h2 className="font-semibold text-stone-800">Répartition du bénéfice</h2>
+                <p className="text-xs text-stone-400">
+                  {repartTotal}% défini · {100 - repartTotal}% restant
+                  {benefice_net > 0 && ` · Distribué sur ${formatFCFA(benefice_net)}`}
+                </p>
+              </div>
+              <button onClick={() => { setEditingRepart(null); setRepartForm({ name: '', percentage: 0 }); setShowRepartModal(true) }}
+                className="flex items-center gap-1 text-xs text-yellow-600 border border-yellow-300 px-2.5 py-1.5 rounded-lg font-medium">
+                <Plus size={12} /> Ajouter
+              </button>
             </div>
+
+            {benefice_net === 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 text-xs text-amber-700 flex items-center gap-2">
+                <AlertTriangle size={13} />
+                La répartition ne s'applique qu'après couverture des charges fixes. Bénéfice net actuel: {formatFCFA(benefice_net)}
+              </div>
+            )}
+
+            {repartition.length === 0 ? (
+              <p className="text-stone-400 text-sm text-center py-4">Aucune règle de répartition définie</p>
+            ) : (
+              <div className="repart-grid">
+                {repartition.map(r => {
+                  const montant = Math.round(benefice_net * r.percentage / 100)
+                  return (
+                    <div key={r.id} className="bg-stone-50 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-medium text-stone-700">{r.name}</p>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => { setEditingRepart(r); setRepartForm({ name: r.name, percentage: r.percentage }); setShowRepartModal(true) }}
+                            className="text-xs text-yellow-600 px-1.5 py-0.5 border border-yellow-200 rounded">✎</button>
+                          <button onClick={() => handleDeleteRepart(r.id)} className="text-xs text-red-400 px-1.5 py-0.5 border border-red-200 rounded">✕</button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-yellow-600">{r.percentage}%</span>
+                        <span className="text-sm font-bold text-stone-800">{formatFCFA(montant)}</span>
+                      </div>
+                      <div className="h-1.5 bg-stone-200 rounded-full mt-1.5 overflow-hidden">
+                        <div className="h-full bg-yellow-400 rounded-full" style={{ width: `${r.percentage}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {repartTotal > 100 && (
+              <p className="text-xs text-red-500 mt-2 flex items-center gap-1">
+                <AlertTriangle size={11} /> Total dépasse 100% ({repartTotal}%)
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* CYCLES CLÔTURÉS */}
+      {closedCycles.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <h2 className="font-semibold text-stone-800 mb-4">Historique des cycles</h2>
+          <div className="space-y-3">
+            {closedCycles.map(cycle => (
+              <div key={cycle.id} className="border border-stone-100 rounded-xl p-3">
+                <div className="flex items-start justify-between flex-wrap gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-stone-800">
+                      {formatDate(cycle.start_date)} → {formatDate(cycle.end_date || '')}
+                    </p>
+                    <div className="flex gap-4 mt-1 flex-wrap">
+                      <span className="text-xs text-stone-400">CA: <strong className="text-stone-600">{formatFCFA(cycle.ca_brut)}</strong></span>
+                      <span className="text-xs text-stone-400">Marge: <strong className="text-stone-600">{formatFCFA(cycle.marge_brute)}</strong></span>
+                      <span className="text-xs text-stone-400">Bénéfice: <strong className={cycle.benefice_net > 0 ? 'text-green-600' : 'text-red-500'}>{formatFCFA(cycle.benefice_net)}</strong></span>
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button onClick={() => handleViewCycle(cycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
+                      <Eye size={12} /> Voir
+                    </button>
+                    <button onClick={() => handleDownloadCycle(cycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
+                      <Download size={12} /> PDF
+                    </button>
+                    <button onClick={() => handleShareCycle(cycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
+                      <Share2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Modal annulation */}
-      {showCancelModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+      {/* MODAL CHARGE */}
+      {showChargeModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-stone-800">Annuler la vente</h2>
-              <button onClick={() => setShowCancelModal(false)}><X size={18} className="text-stone-400" /></button>
+              <h2 className="text-base font-semibold text-stone-800">{editingCharge ? 'Modifier la charge' : 'Nouvelle charge'}</h2>
+              <button onClick={() => { setShowChargeModal(false); setEditingCharge(null) }}><X size={16} className="text-stone-400" /></button>
             </div>
-            <p className="text-sm text-stone-500 mb-3">Le motif est obligatoire.</p>
-            <textarea
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              placeholder="Motif de l'annulation..."
-              rows={3}
-              className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-3"
-            />
-            {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
-            <div className="flex gap-3">
-              <button onClick={handleCancel} disabled={saving} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? '...' : 'Confirmer l\'annulation'}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">Nom *</label>
+                <input value={chargeForm.name} onChange={e => setChargeForm({ ...chargeForm, name: e.target.value })} placeholder="Ex: Salaire vendeuse" className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">Montant (FCFA) *</label>
+                <input type="number" value={chargeForm.amount} onChange={e => setChargeForm({ ...chargeForm, amount: Number(e.target.value) })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">Catégorie</label>
+                <select value={chargeForm.category} onChange={e => setChargeForm({ ...chargeForm, category: e.target.value })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400">
+                  {chargeCategories.map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={handleSaveCharge} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+                {saving ? '...' : editingCharge ? 'Modifier' : 'Ajouter'}
               </button>
-              <button onClick={() => { setShowCancelModal(false); setError('') }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
-                Retour
-              </button>
+              <button onClick={() => { setShowChargeModal(false); setEditingCharge(null) }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal modification 48h */}
-      {showEditModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+      {/* MODAL RÉPARTITION */}
+      {showRepartModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-stone-800">Modifier la vente</h2>
-              <button onClick={() => setShowEditModal(false)}><X size={18} className="text-stone-400" /></button>
+              <h2 className="text-base font-semibold text-stone-800">{editingRepart ? 'Modifier la répartition' : 'Nouvelle répartition'}</h2>
+              <button onClick={() => { setShowRepartModal(false); setEditingRepart(null) }}><X size={16} className="text-stone-400" /></button>
             </div>
-
-            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-              <label className="block text-sm font-medium text-amber-700 mb-1">Motif de modification *</label>
-              <input
-                value={editReason}
-                onChange={(e) => setEditReason(e.target.value)}
-                placeholder="Ex: Erreur de produit, demande client..."
-                className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="space-y-3">
               <div>
-                <label className="block text-xs text-stone-500 mb-1">Client</label>
-                <input value={editCustomerName} onChange={(e) => setEditCustomerName(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+                <label className="block text-xs font-medium text-stone-700 mb-1">Nom *</label>
+                <input value={repartForm.name} onChange={e => setRepartForm({ ...repartForm, name: e.target.value })} placeholder="Ex: Réinvestissement, Épargne..." className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
               </div>
               <div>
-                <label className="block text-xs text-stone-500 mb-1">Source</label>
-                <select value={editSource} onChange={(e) => setEditSource(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400">
-                  <option value="">Sélectionner...</option>
-                  {['TikTok','WhatsApp','Facebook','Instagram','Boutique','Recommandation','Autre'].map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-medium text-stone-700 mb-1">
+                  Pourcentage (%) * — Restant: {100 - repartTotal + (editingRepart?.percentage || 0)}%
+                </label>
+                <input type="number" min="1" max={100 - repartTotal + (editingRepart?.percentage || 0)} value={repartForm.percentage} onChange={e => setRepartForm({ ...repartForm, percentage: Number(e.target.value) })} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
               </div>
-              <div>
-                <label className="block text-xs text-stone-500 mb-1">Paiement</label>
-                <input value={editPayment} onChange={(e) => setEditPayment(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
-              </div>
-              <div>
-                <label className="block text-xs text-stone-500 mb-1">Type réduction</label>
-                <select value={editDiscountType} onChange={(e) => setEditDiscountType(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400">
-                  <option value="">Aucune</option>
-                  <option value="fixed">Montant fixe</option>
-                  <option value="percent">Pourcentage</option>
-                </select>
-              </div>
-              {editDiscountType && (
-                <div>
-                  <label className="block text-xs text-stone-500 mb-1">Valeur {editDiscountType === 'percent' ? '(%)' : '(FCFA)'}</label>
-                  <input type="number" value={editDiscountValue} onChange={(e) => setEditDiscountValue(Number(e.target.value))} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
+              {benefice_net > 0 && repartForm.percentage > 0 && (
+                <div className="bg-green-50 rounded-lg p-3 text-xs text-green-700">
+                  Montant estimé: <strong>{formatFCFA(Math.round(benefice_net * repartForm.percentage / 100))}</strong>
                 </div>
               )}
-              <div className="col-span-2">
-                <label className="block text-xs text-stone-500 mb-1">Notes</label>
-                <input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
-              </div>
             </div>
-
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-stone-700">Articles</h3>
-                <button onClick={() => setShowProductSearch(true)} className="flex items-center gap-1 text-xs text-yellow-600 border border-yellow-300 px-2 py-1 rounded-lg">
-                  <Plus size={12} /> Ajouter
-                </button>
-              </div>
-
-              {showProductSearch && (
-                <div className="mb-3">
-                  <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Rechercher un produit..." autoFocus className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-2" />
-                  <div className="max-h-40 overflow-y-auto border border-stone-200 rounded-lg">
-                    {filteredVariants.map(v => (
-                      <button key={v.id} onClick={() => addToEditCart(v)} className="w-full flex items-center justify-between px-3 py-2 hover:bg-stone-50 text-left">
-                        <div>
-                          <p className="text-sm font-medium text-stone-700">{v.product.name}</p>
-                          <p className="text-xs text-stone-400">{v.name}</p>
-                        </div>
-                        <span className="text-sm font-bold text-stone-700">{formatFCFA(v.sale_price)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                {editCart.map((item, index) => (
-                  <div key={index} className="flex items-center gap-3 bg-stone-50 rounded-lg px-3 py-2">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-stone-700">{item.product_name}</p>
-                      <p className="text-xs text-stone-400">{item.variant_name}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => updateEditQty(item.variant_id || '', item.quantity - 1)} className="w-6 h-6 rounded-full bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-sm">-</button>
-                      <span className="text-sm font-medium w-4 text-center">{item.quantity}</span>
-                      <button onClick={() => updateEditQty(item.variant_id || '', item.quantity + 1)} className="w-6 h-6 rounded-full bg-stone-200 hover:bg-stone-300 flex items-center justify-center text-sm">+</button>
-                    </div>
-                    <p className="text-sm font-bold text-stone-800 w-24 text-right">{formatFCFA(item.unit_price * item.quantity)}</p>
-                    <button onClick={() => setEditCart(editCart.filter((_, i) => i !== index))} className="text-red-400 hover:text-red-500">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-stone-100">
-                <div className="flex justify-between font-bold text-stone-800">
-                  <span>Nouveau total</span>
-                  <span>{formatFCFA(editTotal)}</span>
-                </div>
-              </div>
-            </div>
-
-            {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
-
-            <div className="flex gap-3">
-              <button onClick={handleSaveEdit} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? 'Enregistrement...' : 'Enregistrer les modifications'}
+            <div className="flex gap-2 mt-4">
+              <button onClick={handleSaveRepart} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+                {saving ? '...' : editingRepart ? 'Modifier' : 'Ajouter'}
               </button>
-              <button onClick={() => setShowEditModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
+              <button onClick={() => { setShowRepartModal(false); setEditingRepart(null) }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION CLÔTURE */}
+      {showCloseConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={18} className="text-red-500" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-stone-800">Clôturer le cycle ?</h2>
+                <p className="text-xs text-stone-400">Cette action est irrévocable</p>
+              </div>
+            </div>
+            <div className="bg-stone-50 rounded-xl p-3 mb-4 space-y-1 text-xs">
+              <div className="flex justify-between"><span className="text-stone-500">CA Brut</span><span className="font-medium">{formatFCFA(salesData.ca_brut)}</span></div>
+              <div className="flex justify-between"><span className="text-stone-500">Marge brute</span><span className="font-medium">{formatFCFA(marge_brute)}</span></div>
+              <div className="flex justify-between"><span className="text-stone-500">Charges fixes</span><span className="font-medium">{formatFCFA(totalCharges)}</span></div>
+              <div className="flex justify-between border-t border-stone-200 pt-1 mt-1"><span className="font-semibold">Bénéfice net</span><span className={`font-bold ${benefice_net > 0 ? 'text-green-600' : 'text-red-500'}`}>{formatFCFA(benefice_net)}</span></div>
+            </div>
+            <p className="text-sm text-stone-600 mb-4">Confirmez-vous la clôture définitive de ce cycle ?</p>
+            <div className="flex gap-2">
+              <button onClick={handleCloseCycle} disabled={saving} className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+                <Check size={14} /> Oui, clôturer
+              </button>
+              <button onClick={() => setShowCloseConfirm(false)} className="flex-1 border border-stone-300 text-stone-600 hover:bg-stone-50 py-2.5 rounded-lg text-sm">
                 Annuler
               </button>
             </div>
@@ -645,71 +562,60 @@ export default function VenteDetailPage() {
         </div>
       )}
 
-      {/* Modal reçu */}
-      {showReceiptModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-stone-800">Reçu de vente</h2>
-              <button onClick={() => setShowReceiptModal(false)}><X size={18} className="text-stone-400" /></button>
+      {/* MODAL DÉTAIL CYCLE */}
+      {showCycleDetail && selectedCycle && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-stone-100">
+              <div>
+                <h2 className="font-semibold text-stone-800">Cycle {formatDate(selectedCycle.start_date)} → {formatDate(selectedCycle.end_date || '')}</h2>
+                <p className="text-xs text-stone-400">{cycleVentes.length} vente(s)</p>
+              </div>
+              <button onClick={() => setShowCycleDetail(false)}><X size={18} className="text-stone-400" /></button>
             </div>
 
-            <div className="border border-stone-200 rounded-xl p-4 mb-4 font-mono text-sm">
-              <div className="text-center mb-3">
-                <p className="font-bold text-stone-800 text-base">CATH JEWELRY STORE</p>
-                <p className="text-xs text-stone-400">Bonamoussadi Douala</p>
-                <p className="text-xs text-stone-400">651207853</p>
-              </div>
-              <div className="border-t border-dashed border-stone-200 pt-2 mb-2">
-                <p className="text-xs text-stone-500">Date : {new Date(sale.created_at).toLocaleDateString('fr-FR')}</p>
-                <p className="text-xs text-stone-500">Client : {sale.customer?.full_name || sale.customer_name || 'Anonyme'}</p>
-                {sale.payment_method && <p className="text-xs text-stone-500">Paiement : {sale.payment_method}</p>}
-              </div>
-              <div className="border-t border-dashed border-stone-200 pt-2 mb-2 space-y-1">
-                {sale.sale_items.map((item) => (
-                  <div key={item.id}>
-                    <div className="flex justify-between text-xs">
-                      <span>{item.product_name} {item.variant_name}</span>
-                      <span>{formatFCFA(item.total_price)}</span>
-                    </div>
-                    <div className="text-xs text-stone-400 pl-2">x{item.quantity} × {formatFCFA(item.unit_price)}</div>
+            <div className="p-5 space-y-4">
+              {/* KPI résumé */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'CA Brut', value: selectedCycle.ca_brut },
+                  { label: 'CA Net', value: selectedCycle.ca_net },
+                  { label: 'Coût de revient', value: selectedCycle.cout_revient },
+                  { label: 'Marge Brute', value: selectedCycle.marge_brute },
+                  { label: 'Charges fixes', value: selectedCycle.charges_fixes_total },
+                  { label: 'Bénéfice net', value: selectedCycle.benefice_net },
+                ].map((item, i) => (
+                  <div key={i} className="bg-stone-50 rounded-xl p-3">
+                    <p className="text-xs text-stone-400">{item.label}</p>
+                    <p className={`text-sm font-bold ${i === 5 && item.value > 0 ? 'text-green-600' : 'text-stone-800'}`}>{formatFCFA(item.value)}</p>
                   </div>
                 ))}
               </div>
-              <div className="border-t border-dashed border-stone-200 pt-2">
-                {sale.discount_amount > 0 && (
-                  <>
-                    <div className="flex justify-between text-xs text-stone-500">
-                      <span>Sous-total</span>
-                      <span>{formatFCFA(sale.subtotal)}</span>
+
+              {/* Ventes */}
+              <div>
+                <h3 className="text-sm font-semibold text-stone-700 mb-2">Ventes de la période</h3>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {cycleVentes.map((vente, i) => (
+                    <div key={i} className="border border-stone-100 rounded-xl p-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-xs font-medium text-stone-700">{vente.customer_name || 'Client anonyme'}</p>
+                          <p className="text-xs text-stone-400">{formatDate(vente.created_at)}</p>
+                        </div>
+                        <p className="text-sm font-bold text-stone-800">{formatFCFA(vente.total)}</p>
+                      </div>
+                      {vente.sale_items?.map((item: any, j: number) => (
+                        <div key={j} className="flex justify-between text-xs text-stone-400 mt-1">
+                          <span>{item.product_name} x{item.quantity}</span>
+                          <span>Revient: {formatFCFA((item.unit_cost || 0) * item.quantity)}</span>
+                        </div>
+                      ))}
                     </div>
-                    <div className="flex justify-between text-xs text-red-400">
-                      <span>Réduction</span>
-                      <span>-{formatFCFA(sale.discount_amount)}</span>
-                    </div>
-                  </>
-                )}
-                <div className="flex justify-between font-bold text-stone-800">
-                  <span>TOTAL</span>
-                  <span>{formatFCFA(sale.total)}</span>
+                  ))}
                 </div>
               </div>
-              <p className="text-center text-xs text-stone-400 mt-3">Merci pour votre achat et à très bientôt !</p>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={handlePrint} className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-600 py-2.5 rounded-lg text-sm font-medium transition-colors">
-                <Printer size={14} />
-                Imprimer
-              </button>
-              <button onClick={handleWhatsApp} className="flex items-center justify-center gap-2 bg-green-500 hover:bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium transition-colors">
-                <Send size={14} />
-                WhatsApp
-              </button>
-            </div>
-            <button onClick={() => setShowReceiptModal(false)} className="w-full mt-2 text-stone-400 hover:text-stone-600 text-sm py-2">
-              Fermer
-            </button>
           </div>
         </div>
       )}
