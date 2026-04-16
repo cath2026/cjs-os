@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Plus, Trash2, Image, RefreshCw, Search } from 'lucide-react'
+import { Plus, Trash2, Image, RefreshCw, Search, X } from 'lucide-react'
 
 type Category = { id: string; name: string; prefix: string; next_ref_number: number }
 type Variant = { id: string; name: string; sale_price: number; cost_price: number; stock_quantity: number; barcode?: string }
@@ -21,7 +21,8 @@ export default function ProduitsPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -105,6 +106,20 @@ export default function ProduitsPage() {
     const { data: allVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', productId)
     const totalStock = (allVariants || []).reduce((sum, v) => sum + v.stock_quantity, 0)
     await supabase.from('products').update({ stock: totalStock }).eq('id', productId)
+
+    // Mettre à jour le produit sélectionné si ouvert
+    if (selectedProduct?.id === productId) {
+      const updated = products.map(p => {
+        if (p.id === productId) {
+          const updatedVariants = p.variants?.map(v => v.id === variantId ? { ...v, stock_quantity: newQty } : v)
+          return { ...p, variants: updatedVariants, stock: totalStock }
+        }
+        return p
+      })
+      const updatedProduct = updated.find(p => p.id === productId)
+      if (updatedProduct) setSelectedProduct(updatedProduct)
+    }
+
     fetchProducts()
   }
 
@@ -141,7 +156,7 @@ export default function ProduitsPage() {
 
     await supabase.from('categories').update({ next_ref_number: cat.next_ref_number + variants.length }).eq('id', cat.id)
 
-    setSaving(false); setShowModal(false)
+    setSaving(false); setShowCreateModal(false)
     setForm({ name: '', nameen: '', category_id: '', description: '' })
     setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
     setImageFile1(null); setImageFile2(null); setImageFile3(null)
@@ -149,9 +164,11 @@ export default function ProduitsPage() {
     fetchProducts(); fetchCategories()
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
     if (!confirm('Supprimer ce produit ?')) return
     await supabase.from('products').update({ is_active: false }).eq('id', id)
+    if (selectedProduct?.id === id) setSelectedProduct(null)
     fetchProducts()
   }
 
@@ -162,38 +179,34 @@ export default function ProduitsPage() {
     .filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || (p.nameen || '').toLowerCase().includes(search.toLowerCase()))
 
   return (
-    <div className="p-3 lg:p-5">
+    <div className="p-3 lg:p-4 h-full flex flex-col">
       <style>{`
         .products-grid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
-          gap: 10px;
+          gap: 8px;
         }
-        @media (max-width: 1024px) {
-          .products-grid { grid-template-columns: repeat(3, 1fr); }
-        }
-        @media (max-width: 640px) {
-          .products-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-        }
-        .cats-scroll { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
-        .cats-scroll::-webkit-scrollbar { height: 2px; }
-        .cats-scroll::-webkit-scrollbar-thumb { background: #ca8a04; border-radius: 2px; }
-        .cat-btn { padding: 4px 10px; border-radius: 50px; font-size: 11px; white-space: nowrap; border: 1px solid #e7e5e4; background: white; cursor: pointer; transition: all 0.15s; color: #57534e; }
-        .cat-btn:hover { border-color: #ca8a04; color: #ca8a04; }
+        @media (max-width: 1024px) { .products-grid { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 640px) { .products-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; } }
+        .cats-scroll { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+        .cats-scroll::-webkit-scrollbar { display: none; }
+        .cat-btn { padding: 3px 10px; border-radius: 50px; font-size: 11px; white-space: nowrap; border: 1px solid #e7e5e4; background: white; cursor: pointer; color: #57534e; flex-shrink: 0; }
         .cat-btn.active { background: #1c1917; color: white; border-color: #1c1917; }
-        .stock-btn { width: 20px; height: 20px; border-radius: 4px; border: 1px solid #e7e5e4; background: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; color: #57534e; transition: background 0.15s; }
+        .product-card { cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
+        .product-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .stock-btn { width: 22px; height: 22px; border-radius: 4px; border: 1px solid #e7e5e4; background: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; color: #57534e; }
         .stock-btn:hover { background: #f5f5f4; }
       `}</style>
 
       {/* HEADER */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <div>
-          <h1 className="text-lg font-semibold text-stone-800">Produits & Stock</h1>
+          <h1 className="text-base font-semibold text-stone-800">Produits & Stock</h1>
           <p className="text-stone-400 text-xs">{filtered.length} / {products.length} produits</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => { fetchProducts(); fetchCategories() }} className="p-2 border border-stone-300 text-stone-500 rounded-lg hover:bg-stone-50">
-            <RefreshCw size={14} />
+        <div className="flex gap-1.5">
+          <button onClick={() => { fetchProducts(); fetchCategories() }} className="p-2 border border-stone-200 text-stone-400 rounded-lg hover:bg-stone-50">
+            <RefreshCw size={13} />
           </button>
           <button
             onClick={() => {
@@ -201,9 +214,9 @@ export default function ProduitsPage() {
               setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
               setImageFile1(null); setImageFile2(null); setImageFile3(null)
               setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
-              setError(''); setShowModal(true)
+              setError(''); setShowCreateModal(true)
             }}
-            className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-xs font-medium"
+            className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
           >
             <Plus size={13} /> Nouveau
           </button>
@@ -212,17 +225,17 @@ export default function ProduitsPage() {
 
       {/* RECHERCHE */}
       <div className="relative mb-2">
-        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" />
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Rechercher un produit..."
-          className="w-full border border-stone-200 rounded-lg pl-8 pr-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400"
+          placeholder="Rechercher..."
+          className="w-full border border-stone-200 rounded-lg pl-7 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400"
         />
       </div>
 
-      {/* FILTRE CATÉGORIES */}
-      <div className="cats-scroll mb-3">
+      {/* CATÉGORIES */}
+      <div className="cats-scroll mb-2">
         <button onClick={() => setSelectedCat('all')} className={`cat-btn${selectedCat === 'all' ? ' active' : ''}`}>Tous</button>
         {categories.map(cat => (
           <button key={cat.id} onClick={() => setSelectedCat(cat.prefix)} className={`cat-btn${selectedCat === cat.prefix ? ' active' : ''}`}>
@@ -231,71 +244,49 @@ export default function ProduitsPage() {
         ))}
       </div>
 
-      {/* GRILLE PRODUITS */}
+      {/* GRILLE */}
       {loading ? (
         <p className="text-stone-400 text-sm">Chargement...</p>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl p-10 text-center">
+        <div className="bg-white rounded-xl p-8 text-center flex-1">
           <p className="text-stone-400 text-sm">Aucun produit trouvé</p>
         </div>
       ) : (
-        <div className="products-grid">
+        <div className="products-grid overflow-y-auto flex-1" style={{ alignContent: 'start' }}>
           {filtered.map((product) => (
-            <div key={product.id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-stone-100">
-
-              {/* IMAGE PRINCIPALE */}
+            <div
+              key={product.id}
+              className="product-card bg-white rounded-xl overflow-hidden shadow-sm border border-stone-100"
+              onClick={() => setSelectedProduct(product)}
+            >
+              {/* IMAGE */}
               <div className="relative">
-                {product.image_url ? (
-                  <img src={product.image_url} alt={product.name} className="w-full aspect-square object-cover" />
-                ) : (
-                  <div className="w-full aspect-square bg-stone-100 flex items-center justify-center">
-                    <Image size={24} className="text-stone-300" />
+                {product.image_url
+                  ? <img src={product.image_url} alt={product.name} className="w-full aspect-square object-cover" />
+                  : <div className="w-full aspect-square bg-stone-100 flex items-center justify-center"><Image size={20} className="text-stone-300" /></div>
+                }
+                {(product.stock || 0) === 0 && (
+                  <div className="absolute top-0 left-0 right-0 bottom-0 bg-black/30 flex items-center justify-center">
+                    <span className="text-white text-xs font-bold bg-red-500 px-2 py-0.5 rounded-full">Rupture</span>
                   </div>
                 )}
-                <button onClick={() => handleDelete(product.id)} className="absolute top-1.5 right-1.5 p-1 bg-white/90 text-red-400 rounded-lg shadow-sm hover:bg-red-50">
-                  <Trash2 size={11} />
+                <button
+                  onClick={(e) => handleDelete(product.id, e)}
+                  className="absolute top-1 right-1 p-1 bg-white/90 text-red-400 rounded-lg shadow-sm hover:bg-red-50"
+                >
+                  <Trash2 size={10} />
                 </button>
               </div>
 
-              <div className="p-2">
-                {/* NOM */}
+              {/* INFOS COMPACTES */}
+              <div className="p-1.5">
                 <p className="font-semibold text-stone-800 text-xs leading-tight truncate">{product.name}</p>
-                {product.nameen && <p className="text-stone-400 text-xs italic truncate">{product.nameen}</p>}
-                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full mt-0.5 inline-block">{product.category?.name}</span>
-
-                {/* IMAGES SECONDAIRES */}
-                {(product.image_url_2 || product.image_url_3) && (
-                  <div className="flex gap-1 mt-1.5">
-                    {product.image_url_2 && <img src={product.image_url_2} alt="" className="w-8 h-8 object-cover rounded border border-stone-100" />}
-                    {product.image_url_3 && <img src={product.image_url_3} alt="" className="w-8 h-8 object-cover rounded border border-stone-100" />}
-                  </div>
-                )}
-
-                {/* BARCODE */}
-                <p className="text-xs font-mono text-stone-400 mt-1 truncate">{product.barcode}</p>
-
-                {/* VARIANTES */}
-                <div className="mt-1.5 space-y-1">
-                  {product.variants?.map((v) => (
-                    <div key={v.id} className="bg-stone-50 rounded-lg p-1.5">
-                      <div className="flex justify-between items-center mb-0.5">
-                        <span className="text-xs font-medium text-stone-700 truncate flex-1">{v.name}</span>
-                        <span className="text-xs font-bold text-yellow-600 ml-1 flex-shrink-0">{formatFCFA(v.sale_price)}</span>
-                      </div>
-                      <p className="text-xs font-mono text-stone-400 truncate mb-1">{v.barcode}</p>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity, product.id)} className="stock-btn">-</button>
-                        <span className={`text-xs font-bold w-5 text-center ${v.stock_quantity === 0 ? 'text-red-500' : 'text-stone-700'}`}>{v.stock_quantity}</span>
-                        <button onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity, product.id)} className="stock-btn">+</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* STOCK TOTAL */}
-                <div className="mt-1.5 pt-1.5 border-t border-stone-100 flex justify-between text-xs">
-                  <span className="text-stone-400">Total: <strong className={product.stock === 0 ? 'text-red-500' : 'text-stone-600'}>{product.stock || 0}</strong></span>
-                  <span className="text-stone-500 font-medium">{formatFCFA(product.price || 0)}</span>
+                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full inline-block mt-0.5 truncate max-w-full">{product.category?.name}</span>
+                <div className="flex justify-between items-center mt-1">
+                  <span className={`text-xs font-bold ${(product.stock || 0) === 0 ? 'text-red-500' : 'text-stone-600'}`}>
+                    Stock: {product.stock || 0}
+                  </span>
+                  <span className="text-xs text-yellow-600 font-medium">{formatFCFA(product.price || 0)}</span>
                 </div>
               </div>
             </div>
@@ -303,16 +294,93 @@ export default function ProduitsPage() {
         </div>
       )}
 
+      {/* MODAL DÉTAIL PRODUIT */}
+      {selectedProduct && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedProduct(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-stone-100">
+              <div>
+                <h2 className="font-semibold text-stone-800">{selectedProduct.name}</h2>
+                {selectedProduct.nameen && <p className="text-xs text-stone-400 italic">{selectedProduct.nameen}</p>}
+              </div>
+              <button onClick={() => setSelectedProduct(null)} className="p-1.5 hover:bg-stone-100 rounded-lg">
+                <X size={16} className="text-stone-500" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              {/* 3 IMAGES */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {[selectedProduct.image_url, selectedProduct.image_url_2, selectedProduct.image_url_3].map((img, i) => (
+                  <div key={i} className="aspect-square rounded-xl overflow-hidden bg-stone-100">
+                    {img
+                      ? <img src={img} alt="" className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center"><Image size={20} className="text-stone-300" /></div>
+                    }
+                  </div>
+                ))}
+              </div>
+
+              {/* INFOS */}
+              <div className="space-y-1 mb-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">{selectedProduct.category?.name}</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${(selectedProduct.stock || 0) === 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                    Stock total: {selectedProduct.stock || 0}
+                  </span>
+                </div>
+                <p className="text-xs font-mono text-stone-400">{selectedProduct.barcode}</p>
+                {selectedProduct.description && <p className="text-xs text-stone-500">{selectedProduct.description}</p>}
+              </div>
+
+              {/* VARIANTES */}
+              <div>
+                <h3 className="text-xs font-semibold text-stone-600 uppercase tracking-wide mb-2">Variantes</h3>
+                <div className="space-y-2">
+                  {selectedProduct.variants?.map((v) => (
+                    <div key={v.id} className="bg-stone-50 rounded-xl p-3">
+                      <div className="flex justify-between items-start mb-1">
+                        <div>
+                          <p className="text-sm font-semibold text-stone-800">{v.name}</p>
+                          <p className="text-xs font-mono text-stone-400">{v.barcode}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-yellow-600">{formatFCFA(v.sale_price)}</p>
+                          <p className="text-xs text-stone-400">Revient: {formatFCFA(v.cost_price)}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          onClick={() => updateStock(v.id, v.stock_quantity - 1, v.stock_quantity, selectedProduct.id)}
+                          className="stock-btn"
+                        >-</button>
+                        <span className={`text-sm font-bold w-8 text-center ${v.stock_quantity === 0 ? 'text-red-500' : 'text-stone-800'}`}>
+                          {v.stock_quantity}
+                        </span>
+                        <button
+                          onClick={() => updateStock(v.id, v.stock_quantity + 1, v.stock_quantity, selectedProduct.id)}
+                          className="stock-btn"
+                        >+</button>
+                        <span className="text-xs text-stone-400">en stock</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL CRÉATION */}
-      {showModal && (
+      {showCreateModal && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-lg shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-semibold text-stone-800">Nouveau produit</h2>
-              <button onClick={() => setShowModal(false)} className="text-stone-400 hover:text-stone-600 text-xl">✕</button>
+              <button onClick={() => setShowCreateModal(false)} className="text-stone-400 hover:text-stone-600 text-xl">✕</button>
             </div>
 
-            {/* 3 IMAGES */}
             <div className="mb-4">
               <label className="block text-xs font-medium text-stone-700 mb-2">Photos (3 max)</label>
               <div className="grid grid-cols-3 gap-2">
@@ -358,7 +426,6 @@ export default function ProduitsPage() {
               </div>
             </div>
 
-            {/* VARIANTES */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-xs font-semibold text-stone-700">Variantes</h3>
@@ -398,7 +465,7 @@ export default function ProduitsPage() {
               <button onClick={handleSave} disabled={saving} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
                 {saving ? 'Création...' : 'Créer le produit'}
               </button>
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
+              <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
                 Annuler
               </button>
             </div>
