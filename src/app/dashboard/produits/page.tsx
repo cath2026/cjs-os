@@ -220,8 +220,7 @@ export default function ProduitsPage() {
         </div>
       ) : (
         // GRILLE 2 COLONNES
-        <div className="grid grid-cols-2 gap-3">
-          {products.map((product) => (
+<div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>          {products.map((product) => (
             <div key={product.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
 
               {/* IMAGE PRINCIPALE */}
