@@ -167,8 +167,7 @@ export default function CustomerDetailPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="col-span-1 bg-white rounded-xl p-5 shadow-sm">
+<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">        <div className="col-span-1 bg-white rounded-xl p-5 shadow-sm">
           <h2 className="font-semibold text-stone-700 mb-4">Informations</h2>
           {editing ? (
             <div className="space-y-3">
@@ -244,8 +243,7 @@ export default function CustomerDetailPage() {
           )}
         </div>
 
-        <div className="col-span-2 grid grid-cols-4 gap-3">
-          <div className="bg-white rounded-xl p-4 shadow-sm flex flex-col items-center justify-center">
+<div className="col-span-1 lg:col-span-2 grid grid-cols-2 lg:grid-cols-4 gap-3">          <div className="bg-white rounded-xl p-4 shadow-sm flex flex-col items-center justify-center">
             <DollarSign size={20} className="text-yellow-500 mb-1" />
             <p className="text-xs text-stone-400 mb-1">Total dépensé</p>
             <p className="font-bold text-stone-800 text-center text-sm">{formatFCFA(customer.total_spent)}</p>
