@@ -250,7 +250,7 @@ export default function NouvelleVentePage() {
     new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
 
   return (
-    <div className="p-6">
+    <div className="p-4 lg:p-6">
       <div className="flex items-center gap-3 mb-6">
         <button onClick={() => router.back()} className="p-2 hover:bg-stone-100 rounded-lg">
           <ArrowLeft size={18} className="text-stone-600" />
@@ -261,7 +261,7 @@ export default function NouvelleVentePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
         {/* Colonne gauche */}
         <div className="space-y-4">
           {/* Client */}
@@ -514,8 +514,8 @@ export default function NouvelleVentePage() {
 
       {/* Modal ajout produit manuel */}
       {showProductModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Ajouter un produit</h2>
               <button onClick={() => setShowProductModal(false)}>
