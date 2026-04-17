@@ -264,8 +264,7 @@ export default function PerformancePage() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        <div className="bg-white rounded-xl p-4 shadow-sm">
+<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">        <div className="bg-white rounded-xl p-4 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
             <ShoppingCart size={16} className="text-stone-400" />
             <p className="text-sm text-stone-500">CA Généré</p>
@@ -292,8 +291,7 @@ export default function PerformancePage() {
       </div>
 
       {/* Discipline & Résumé */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl p-5 shadow-sm">
+<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">        <div className="bg-white rounded-xl p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <Clock size={16} className="text-stone-400" />
             <h2 className="font-semibold text-stone-700">Discipline</h2>
@@ -331,9 +329,8 @@ export default function PerformancePage() {
 
       {/* Modal objectif */}
       {showGoalModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
+<div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">          
+<div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">            <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Définir l'objectif CA</h2>
               <button onClick={() => setShowGoalModal(false)}>
                 <X size={18} className="text-stone-400" />
