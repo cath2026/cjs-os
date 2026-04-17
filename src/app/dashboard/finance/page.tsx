@@ -83,9 +83,10 @@ export default function FinancePage() {
     setRepartition(rp || [])
 
     // Dates du cycle actif
-    const startISO = active?.start_date
-      ? new Date(active.start_date).toISOString()
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+    // Utiliser created_at du cycle actif (timestamp exact de création) plutôt que start_date
+const startISO = active?.created_at
+  ? new Date(active.created_at).toISOString()
+  : new Date().toISOString()
 
     // Ventes boutique
     const { data: boutique } = await supabase
