@@ -243,7 +243,7 @@ export default function EmployesPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols_2 gap-4">
         {employees.map((emp) => (
           <div key={emp.id} className="bg-white rounded-xl p-5 shadow-sm">
             <div className="flex items-start justify-between mb-3">
@@ -307,8 +307,8 @@ export default function EmployesPage() {
 
       {/* Modal nouvel employé */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-2xl shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Nouvel employé</h2>
               <button onClick={() => setShowModal(false)}>
@@ -447,8 +447,8 @@ export default function EmployesPage() {
 
       {/* Modal modifier employé */}
       {showEditModal && editingEmployee && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl smrounded-2xl p-5 w-full sm:max-w-md shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-stone-800">Modifier l'employé</h2>
               <button onClick={() => setShowEditModal(false)}>
@@ -519,8 +519,8 @@ export default function EmployesPage() {
 
       {/* Modal permissions */}
       {showPermModal && editingEmployee && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-2xl shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-lg font-semibold text-stone-800">
