@@ -151,19 +151,22 @@ export default function FinancePage() {
     }).eq('id', cycleId)
 
     // Créer un nouveau cycle actif
-    await supabase.from('finance_cycles').insert({
+    const { data: newCycle } = await supabase.from('finance_cycles').insert({
       shop_id: SHOP_ID,
       start_date: new Date().toISOString().split('T')[0],
       status: 'active',
-    })
+    }).select().single()
 
-    // Remettre les chiffres à zéro immédiatement
+    // Remettre à zéro immédiatement sans attendre fetchAll
     setSalesData({ ca_brut: 0, ca_net: 0, cout_revient: 0, nb_ventes: 0 })
+    setActiveCycle(newCycle)
     setSaving(false)
     setShowClotureModal(false)
     setClotureConfirm('')
     showToast('✓ Cycle clôturé avec succès')
-    fetchAll()
+
+    // Recharger après un délai pour laisser Supabase enregistrer
+    setTimeout(() => fetchAll(), 1000)
   }
 
   const handleAddCharge = async () => {
