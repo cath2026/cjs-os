@@ -94,75 +94,87 @@ export default function ProduitsPage() {
   }
 
   const updateStock = async (variantId: string, newQty: number, currentQty: number, productId: string) => {
-    if (newQty < 0) return
-    const { data: { user } } = await supabase.auth.getUser()
-    const { data: empData } = await supabase.from('employees').select('id').eq('auth_user_id', user?.id).single()
-    await supabase.from('variants').update({ stock_quantity: newQty, updated_at: new Date().toISOString() }).eq('id', variantId)
-    await supabase.from('stock_movements').insert({
-      shop_id: SHOP_ID, variant_id: variantId, employee_id: empData?.id,
-      movement_type: 'adjustment', quantity_change: newQty - currentQty,
-      quantity_before: currentQty, quantity_after: newQty, notes: 'Ajustement manuel',
-    })
-    const { data: allVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', productId)
-    const totalStock = (allVariants || []).reduce((sum, v) => sum + v.stock_quantity, 0)
-    await supabase.from('products').update({ stock: totalStock }).eq('id', productId)
+  if (newQty < 0) return
 
-    // Mettre à jour le produit sélectionné si ouvert
-    if (selectedProduct?.id === productId) {
-      const updated = products.map(p => {
-        if (p.id === productId) {
-          const updatedVariants = p.variants?.map(v => v.id === variantId ? { ...v, stock_quantity: newQty } : v)
-          return { ...p, variants: updatedVariants, stock: totalStock }
-        }
-        return p
-      })
-      const updatedProduct = updated.find(p => p.id === productId)
-      if (updatedProduct) setSelectedProduct(updatedProduct)
-    }
+  // Mise à jour optimiste immédiate du modal
+  setSelectedProduct(prev => {
+    if (!prev) return prev
+    const updatedVariants = prev.variants?.map(v =>
+      v.id === variantId ? { ...v, stock_quantity: newQty } : v
+    )
+    const totalStock = updatedVariants?.reduce((s, v) => s + v.stock_quantity, 0) || 0
+    return { ...prev, variants: updatedVariants, stock: totalStock }
+  })
 
-    fetchProducts()
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: empData } = await supabase.from('employees').select('id').eq('auth_user_id', user?.id).single()
+
+  await supabase.from('variants').update({ stock_quantity: newQty, updated_at: new Date().toISOString() }).eq('id', variantId)
+
+  await supabase.from('stock_movements').insert({
+    shop_id: SHOP_ID, variant_id: variantId, employee_id: empData?.id,
+    movement_type: 'adjustment', quantity_change: newQty - currentQty,
+    quantity_before: currentQty, quantity_after: newQty, notes: 'Ajustement manuel',
+  })
+
+  const { data: allVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', productId)
+  const totalStock = (allVariants || []).reduce((sum, v) => sum + v.stock_quantity, 0)
+  await supabase.from('products').update({ stock: totalStock }).eq('id', productId)
+
+  fetchProducts()
+}
   }
 
   const handleSave = async () => {
-    if (!form.name || !form.category_id) { setError('Nom et catégorie obligatoires'); return }
-    if (variants.some(v => !v.name)) { setError('Chaque variante doit avoir un nom'); return }
-    setSaving(true); setError('')
+  if (!form.name || !form.category_id) { setError('Nom et catégorie obligatoires'); return }
+  if (variants.some(v => !v.name)) { setError('Chaque variante doit avoir un nom'); return }
+  setSaving(true); setError('')
 
-    const cat = categories.find(c => c.id === form.category_id)
-    if (!cat) { setError('Catégorie introuvable'); setSaving(false); return }
+  const cat = categories.find(c => c.id === form.category_id)
+  if (!cat) { setError('Catégorie introuvable'); setSaving(false); return }
 
-    const totalStock = variants.reduce((sum, v) => sum + v.stock_quantity, 0)
-    const minPrice = Math.min(...variants.map(v => v.sale_price))
-    const firstBarcode = `CJS-${cat.prefix}-${String(cat.next_ref_number).padStart(4, '0')}`
+  const totalStock = variants.reduce((sum, v) => sum + v.stock_quantity, 0)
+  const minPrice = Math.min(...variants.map(v => v.sale_price))
+  const firstBarcode = `CJS-${cat.prefix}-${String(cat.next_ref_number).padStart(4, '0')}`
 
-    const { data: product, error: productError } = await supabase
-      .from('products')
-      .insert({ shop_id: SHOP_ID, name: form.name, nameen: form.nameen, category_id: form.category_id, description: form.description, stock: totalStock, price: minPrice, barcode: firstBarcode, is_active: true })
-      .select().single()
+  const { data: product, error: productError } = await supabase
+    .from('products')
+    .insert({ shop_id: SHOP_ID, name: form.name, nameen: form.nameen, category_id: form.category_id, description: form.description, stock: totalStock, price: minPrice, barcode: firstBarcode, is_active: true })
+    .select().single()
 
-    if (productError || !product) { setError('Erreur lors de la création'); setSaving(false); return }
+  if (productError || !product) { setError('Erreur lors de la création'); setSaving(false); return }
 
-    const imageUrls: Record<string, string> = {}
-    if (imageFile1) { const url = await uploadImage(product.id, imageFile1, 1); if (url) imageUrls.image_url = url }
-    if (imageFile2) { const url = await uploadImage(product.id, imageFile2, 2); if (url) imageUrls.image_url_2 = url }
-    if (imageFile3) { const url = await uploadImage(product.id, imageFile3, 3); if (url) imageUrls.image_url_3 = url }
-    if (Object.keys(imageUrls).length > 0) await supabase.from('products').update(imageUrls).eq('id', product.id)
-
-    for (let i = 0; i < variants.length; i++) {
-      const barcode = `CJS-${cat.prefix}-${String(cat.next_ref_number + i).padStart(4, '0')}`
-      await supabase.from('variants').insert({ shop_id: SHOP_ID, product_id: product.id, name: variants[i].name, sale_price: variants[i].sale_price, cost_price: variants[i].cost_price, stock_quantity: variants[i].stock_quantity, barcode })
-      await supabase.from('barcodes').insert({ shop_id: SHOP_ID, product_id: product.id, barcode_value: barcode, category_code: cat.prefix })
+  // Upload images séquentiellement avec retry
+  const uploadWithRetry = async (file: File, slot: 1 | 2 | 3): Promise<string | null> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const url = await uploadImage(product.id, file, slot)
+      if (url) return url
+      await new Promise(r => setTimeout(r, 1000))
     }
-
-    await supabase.from('categories').update({ next_ref_number: cat.next_ref_number + variants.length }).eq('id', cat.id)
-
-    setSaving(false); setShowCreateModal(false)
-    setForm({ name: '', nameen: '', category_id: '', description: '' })
-    setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
-    setImageFile1(null); setImageFile2(null); setImageFile3(null)
-    setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
-    fetchProducts(); fetchCategories()
+    return null
   }
+
+  const imageUrls: Record<string, string> = {}
+  if (imageFile1) { const url = await uploadWithRetry(imageFile1, 1); if (url) imageUrls.image_url = url }
+  if (imageFile2) { const url = await uploadWithRetry(imageFile2, 2); if (url) imageUrls.image_url_2 = url }
+  if (imageFile3) { const url = await uploadWithRetry(imageFile3, 3); if (url) imageUrls.image_url_3 = url }
+  if (Object.keys(imageUrls).length > 0) await supabase.from('products').update(imageUrls).eq('id', product.id)
+
+  for (let i = 0; i < variants.length; i++) {
+    const barcode = `CJS-${cat.prefix}-${String(cat.next_ref_number + i).padStart(4, '0')}`
+    await supabase.from('variants').insert({ shop_id: SHOP_ID, product_id: product.id, name: variants[i].name, sale_price: variants[i].sale_price, cost_price: variants[i].cost_price, stock_quantity: variants[i].stock_quantity, barcode })
+    await supabase.from('barcodes').insert({ shop_id: SHOP_ID, product_id: product.id, barcode_value: barcode, category_code: cat.prefix })
+  }
+
+  await supabase.from('categories').update({ next_ref_number: cat.next_ref_number + variants.length }).eq('id', cat.id)
+
+  setSaving(false); setShowCreateModal(false)
+  setForm({ name: '', nameen: '', category_id: '', description: '' })
+  setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
+  setImageFile1(null); setImageFile2(null); setImageFile3(null)
+  setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
+  fetchProducts(); fetchCategories()
+}
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
