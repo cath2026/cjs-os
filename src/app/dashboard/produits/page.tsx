@@ -281,9 +281,9 @@ export default function ProduitsPage() {
                 <p className="font-semibold text-stone-800 text-xs leading-tight truncate">{product.name}</p>
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full inline-block mt-0.5 truncate max-w-full">{product.category?.name}</span>
                 <div className="flex justify-between items-center mt-1">
-                  <span className={`text-xs font-bold ${(product.stock || 0) === 0 ? 'text-red-500' : 'text-stone-600'}`}>
-                    Stock: {product.stock || 0}
-                  </span>
+                  <span className={`text-xs font-bold ${(product.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0) === 0 ? 'text-red-500' : 'text-stone-600'}`}>
+  Stock: {product.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0}
+</span>
                   <span className="text-xs text-yellow-600 font-medium">{formatFCFA(product.price || 0)}</span>
                 </div>
               </div>
@@ -324,9 +324,9 @@ export default function ProduitsPage() {
               {/* INFOS */}
               <div className="flex flex-wrap items-center gap-2 mb-3">
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">{selectedProduct.category?.name}</span>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${(selectedProduct.stock || 0) === 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                  Stock total: {selectedProduct.stock || 0}
-                </span>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${(selectedProduct.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0) === 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+  Stock total: {selectedProduct.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0}
+</span>
               </div>
               <p className="text-xs font-mono text-stone-400 mb-1">{selectedProduct.barcode}</p>
               {selectedProduct.description && <p className="text-xs text-stone-500 mb-3">{selectedProduct.description}</p>}
