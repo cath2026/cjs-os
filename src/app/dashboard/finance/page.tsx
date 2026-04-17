@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Plus, X, TrendingUp, DollarSign, Percent, Download, Eye, Share2, AlertTriangle, Check, Edit2, Trash2 } from 'lucide-react'
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
@@ -22,629 +21,543 @@ export default function FinancePage() {
   const [charges, setCharges] = useState<Charge[]>([])
   const [repartition, setRepartition] = useState<Repartition[]>([])
   const [salesData, setSalesData] = useState({ ca_brut: 0, ca_net: 0, cout_revient: 0, nb_ventes: 0 })
-  const [showChargeModal, setShowChargeModal] = useState(false)
-  const [showRepartModal, setShowRepartModal] = useState(false)
-  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+  const [showAddCharge, setShowAddCharge] = useState(false)
+  const [showAddRep, setShowAddRep] = useState(false)
+  const [showClotureModal, setShowClotureModal] = useState(false)
+  const [showEditChargeModal, setShowEditChargeModal] = useState(false)
+  const [showEditRepModal, setShowEditRepModal] = useState(false)
+  const [showDetailModal, setShowDetailModal] = useState(false)
   const [editingCharge, setEditingCharge] = useState<Charge | null>(null)
-  const [editingRepart, setEditingRepart] = useState<Repartition | null>(null)
-  const [chargeForm, setChargeForm] = useState({ name: '', amount: 0, category: 'autre' })
-  const [repartForm, setRepartForm] = useState({ name: '', percentage: 0 })
-  const [saving, setSaving] = useState(false)
+  const [editingRep, setEditingRep] = useState<Repartition | null>(null)
   const [selectedCycle, setSelectedCycle] = useState<Cycle | null>(null)
   const [cycleVentes, setCycleVentes] = useState<any[]>([])
-  const [showCycleDetail, setShowCycleDetail] = useState(false)
+  const [clotureConfirm, setClotureConfirm] = useState('')
+  const [chargeForm, setChargeForm] = useState({ name: '', amount: 0 })
+  const [repForm, setRepForm] = useState({ name: '', percentage: 0 })
+  const [editChargeForm, setEditChargeForm] = useState({ name: '', amount: 0 })
+  const [editRepForm, setEditRepForm] = useState({ name: '', percentage: 0 })
+  const [toast, setToast] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(''), 2800)
+  }
+
+  const fmt = (n: number) => n.toLocaleString('fr-FR')
+  const fmtDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+
+  const totalCharges = charges.reduce((s, c) => s + c.amount, 0)
+  const margeBrute = salesData.ca_net - salesData.cout_revient
+  const margeNette = Math.max(0, margeBrute - totalCharges)
+  const totalRepPct = repartition.reduce((s, r) => s + r.percentage, 0)
 
   const fetchAll = async () => {
     setLoading(true)
-
-    // Cycles
-    const { data: cycles } = await supabase
-      .from('finance_cycles')
-      .select('*')
-      .eq('shop_id', SHOP_ID)
-      .order('created_at', { ascending: false })
-
+    const { data: cycles } = await supabase.from('finance_cycles').select('*').eq('shop_id', SHOP_ID).order('created_at', { ascending: false })
     const active = cycles?.find(c => c.status === 'active') || null
-    const closed = cycles?.filter(c => c.status === 'closed') || []
     setActiveCycle(active)
-    setClosedCycles(closed)
+    setClosedCycles(cycles?.filter(c => c.status === 'closed') || [])
 
-    // Charges
-    const { data: ch } = await supabase
-      .from('finance_charges')
-      .select('*')
-      .eq('shop_id', SHOP_ID)
-      .eq('is_active', true)
-      .order('category')
+    const { data: ch } = await supabase.from('finance_charges').select('*').eq('shop_id', SHOP_ID).eq('is_active', true)
     setCharges(ch || [])
 
-    // Répartition
-    const { data: rp } = await supabase
-      .from('finance_repartition')
-      .select('*')
-      .eq('shop_id', SHOP_ID)
-      .eq('is_active', true)
+    const { data: rp } = await supabase.from('finance_repartition').select('*').eq('shop_id', SHOP_ID).eq('is_active', true)
     setRepartition(rp || [])
 
-    // Ventes boutique + site
     const startDate = active?.start_date || new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
 
-    const { data: boutiqueSales } = await supabase
-      .from('sales')
-      .select('*, sale_items(*)')
-      .eq('shop_id', SHOP_ID)
-      .eq('status', 'paid')
-      .gte('created_at', startDate)
+    const { data: boutique } = await supabase.from('sales').select('*, sale_items(*)').eq('shop_id', SHOP_ID).eq('status', 'paid').gte('created_at', startDate)
+    const { data: site } = await supabase.from('orders').select('*').eq('shop_id', SHOP_ID).eq('status', 'livré').gte('created_at', startDate)
 
-    const { data: siteSales } = await supabase
-      .from('orders')
-      .select('*, items')
-      .eq('shop_id', SHOP_ID)
-      .eq('status', 'livré')
-      .gte('created_at', startDate)
+    const ca_b = boutique?.reduce((s, v) => s + (v.total || 0), 0) || 0
+    const ca_s = site?.reduce((s, v) => s + (v.total || 0), 0) || 0
+    const ca_brut = ca_b + ca_s
+    const remises = (boutique?.reduce((s, v) => s + (v.discount_amount || 0), 0) || 0) + (site?.reduce((s, v) => s + (v.discount || 0), 0) || 0)
+    const ca_net = ca_brut - remises
+    const cout = boutique?.reduce((s, v) => s + (v.sale_items || []).reduce((si: number, i: any) => si + (i.unit_cost || 0) * i.quantity, 0), 0) || 0
 
-    const ca_boutique = boutiqueSales?.reduce((s, v) => s + (v.total || 0), 0) || 0
-    const ca_site = siteSales?.reduce((s, v) => s + (v.total || 0), 0) || 0
-    const ca_brut = ca_boutique + ca_site
-
-    const remises_boutique = boutiqueSales?.reduce((s, v) => s + (v.discount_amount || 0), 0) || 0
-    const remises_site = siteSales?.reduce((s, v) => s + (v.discount || 0), 0) || 0
-    const ca_net = ca_brut - remises_boutique - remises_site
-
-    const cout_boutique = boutiqueSales?.reduce((s, v) =>
-      s + (v.sale_items || []).reduce((si: number, i: any) => si + (i.unit_cost || 0) * i.quantity, 0), 0) || 0
-
-    setSalesData({
-      ca_brut,
-      ca_net,
-      cout_revient: cout_boutique,
-      nb_ventes: (boutiqueSales?.length || 0) + (siteSales?.length || 0)
-    })
-
+    setSalesData({ ca_brut, ca_net, cout_revient: cout, nb_ventes: (boutique?.length || 0) + (site?.length || 0) })
     setLoading(false)
   }
 
   useEffect(() => { fetchAll() }, [])
 
-  // Calculs
-  const totalCharges = charges.reduce((s, c) => s + c.amount, 0)
-  const marge_brute = salesData.ca_net - salesData.cout_revient
-  const benefice_net = Math.max(0, marge_brute - totalCharges)
-  const repartTotal = repartition.reduce((s, r) => s + r.percentage, 0)
-  const formatFCFA = (n: number) => new Intl.NumberFormat('fr-FR').format(Math.round(n)) + ' FCFA'
-  const formatDate = (d: string) => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
-
-  // CLÔTURE CYCLE
-  const handleCloseCycle = async () => {
+  const handleCloture = async () => {
+    if (clotureConfirm !== 'CONFIRMER') return
     setSaving(true)
     let cycleId = activeCycle?.id
-
     if (!cycleId) {
-      // Créer un cycle si aucun n'existe
       const startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-      const { data } = await supabase.from('finance_cycles').insert({
-        shop_id: SHOP_ID,
-        start_date: startDate,
-        status: 'active'
-      }).select().single()
+      const { data } = await supabase.from('finance_cycles').insert({ shop_id: SHOP_ID, start_date: startDate, status: 'active' }).select().single()
       cycleId = data?.id
     }
-
-    await supabase.from('finance_cycles').update({
-      status: 'closed',
-      end_date: new Date().toISOString().split('T')[0],
-      ca_brut: salesData.ca_brut,
-      ca_net: salesData.ca_net,
-      cout_revient: salesData.cout_revient,
-      marge_brute,
-      charges_fixes_total: totalCharges,
-      benefice_net,
-    }).eq('id', cycleId)
-
-    // Créer nouveau cycle actif
-    await supabase.from('finance_cycles').insert({
-      shop_id: SHOP_ID,
-      start_date: new Date().toISOString().split('T')[0],
-      status: 'active'
-    })
-
+    await supabase.from('finance_cycles').update({ status: 'closed', end_date: new Date().toISOString().split('T')[0], ca_brut: salesData.ca_brut, ca_net: salesData.ca_net, cout_revient: salesData.cout_revient, marge_brute: margeBrute, charges_fixes_total: totalCharges, benefice_net: margeNette }).eq('id', cycleId)
+    await supabase.from('finance_cycles').insert({ shop_id: SHOP_ID, start_date: new Date().toISOString().split('T')[0], status: 'active' })
     setSaving(false)
-    setShowCloseConfirm(false)
+    setShowClotureModal(false)
+    setClotureConfirm('')
+    showToast('✓ Cycle clôturé avec succès')
     fetchAll()
   }
 
-  // CHARGES
+  const handleAddCharge = async () => {
+    if (!chargeForm.name || chargeForm.amount <= 0) { showToast('Remplissez tous les champs'); return }
+    await supabase.from('finance_charges').insert({ shop_id: SHOP_ID, name: chargeForm.name, amount: chargeForm.amount, category: 'autre' })
+    setChargeForm({ name: '', amount: 0 })
+    setShowAddCharge(false)
+    showToast(`Charge "${chargeForm.name}" ajoutée`)
+    fetchAll()
+  }
+
   const handleSaveCharge = async () => {
-    if (!chargeForm.name || chargeForm.amount <= 0) return
-    setSaving(true)
-    if (editingCharge) {
-      await supabase.from('finance_charges').update({ name: chargeForm.name, amount: chargeForm.amount, category: chargeForm.category }).eq('id', editingCharge.id)
-    } else {
-      await supabase.from('finance_charges').insert({ shop_id: SHOP_ID, name: chargeForm.name, amount: chargeForm.amount, category: chargeForm.category })
-    }
-    setSaving(false)
-    setShowChargeModal(false)
-    setEditingCharge(null)
-    setChargeForm({ name: '', amount: 0, category: 'autre' })
+    if (!editingCharge) return
+    await supabase.from('finance_charges').update({ name: editChargeForm.name, amount: editChargeForm.amount }).eq('id', editingCharge.id)
+    setShowEditChargeModal(false)
+    showToast('Charge modifiée')
     fetchAll()
   }
 
-  const handleDeleteCharge = async (id: string) => {
-    await supabase.from('finance_charges').update({ is_active: false }).eq('id', id)
+  const handleDeleteCharge = async () => {
+    if (!editingCharge) return
+    await supabase.from('finance_charges').update({ is_active: false }).eq('id', editingCharge.id)
+    setShowEditChargeModal(false)
+    showToast('Charge supprimée')
     fetchAll()
   }
 
-  // RÉPARTITION
-  const handleSaveRepart = async () => {
-    if (!repartForm.name || repartForm.percentage <= 0) return
-    setSaving(true)
-    if (editingRepart) {
-      await supabase.from('finance_repartition').update({ name: repartForm.name, percentage: repartForm.percentage }).eq('id', editingRepart.id)
-    } else {
-      await supabase.from('finance_repartition').insert({ shop_id: SHOP_ID, name: repartForm.name, percentage: repartForm.percentage })
-    }
-    setSaving(false)
-    setShowRepartModal(false)
-    setEditingRepart(null)
-    setRepartForm({ name: '', percentage: 0 })
+  const handleAddRep = async () => {
+    if (!repForm.name || repForm.percentage <= 0) { showToast('Vérifiez les données'); return }
+    if (totalRepPct + repForm.percentage > 100) { showToast('Total dépasserait 100%'); return }
+    await supabase.from('finance_repartition').insert({ shop_id: SHOP_ID, name: repForm.name, percentage: repForm.percentage })
+    setRepForm({ name: '', percentage: 0 })
+    setShowAddRep(false)
+    showToast(`Catégorie "${repForm.name}" ajoutée`)
     fetchAll()
   }
 
-  const handleDeleteRepart = async (id: string) => {
-    await supabase.from('finance_repartition').update({ is_active: false }).eq('id', id)
+  const handleSaveRep = async () => {
+    if (!editingRep) return
+    const otherTotal = totalRepPct - editingRep.percentage
+    if (otherTotal + editRepForm.percentage > 100) { showToast('Total dépasserait 100%'); return }
+    await supabase.from('finance_repartition').update({ name: editRepForm.name, percentage: editRepForm.percentage }).eq('id', editingRep.id)
+    setShowEditRepModal(false)
+    showToast('Répartition modifiée')
     fetchAll()
   }
 
-  // DÉTAIL CYCLE
+  const handleDeleteRep = async () => {
+    if (!editingRep) return
+    await supabase.from('finance_repartition').update({ is_active: false }).eq('id', editingRep.id)
+    setShowEditRepModal(false)
+    showToast('Catégorie supprimée')
+    fetchAll()
+  }
+
   const handleViewCycle = async (cycle: Cycle) => {
     setSelectedCycle(cycle)
-    const { data } = await supabase
-      .from('sales')
-      .select('*, sale_items(*)')
-      .eq('shop_id', SHOP_ID)
-      .eq('status', 'paid')
-      .gte('created_at', cycle.start_date)
-      .lte('created_at', cycle.end_date || new Date().toISOString())
+    const { data } = await supabase.from('sales').select('*, sale_items(*)').eq('shop_id', SHOP_ID).eq('status', 'paid').gte('created_at', cycle.start_date).lte('created_at', cycle.end_date || new Date().toISOString())
     setCycleVentes(data || [])
-    setShowCycleDetail(true)
+    setShowDetailModal(true)
   }
 
-  const handleDownloadCycle = (cycle: Cycle) => {
-    const content = `RAPPORT FINANCIER — CATH JEWELRY STORE
-Cycle: ${formatDate(cycle.start_date)} → ${formatDate(cycle.end_date || '')}
-=====================================
-CA Brut: ${formatFCFA(cycle.ca_brut)}
-CA Net: ${formatFCFA(cycle.ca_net)}
-Coût de revient: ${formatFCFA(cycle.cout_revient)}
-Marge brute: ${formatFCFA(cycle.marge_brute)}
-Charges fixes: ${formatFCFA(cycle.charges_fixes_total)}
-Bénéfice net: ${formatFCFA(cycle.benefice_net)}
-`.trim()
-    const blob = new Blob([content], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `cycle-${cycle.start_date}.txt`
-    a.click()
-  }
-
-  const handleShareCycle = (cycle: Cycle) => {
-    const text = `Cycle CJS ${formatDate(cycle.start_date)} → ${formatDate(cycle.end_date || '')}\nCA: ${formatFCFA(cycle.ca_brut)}\nBénéfice: ${formatFCFA(cycle.benefice_net)}`
+  const handleShare = (cycle: Cycle) => {
+    const text = `Cycle CJS ${fmtDate(cycle.start_date)} → ${fmtDate(cycle.end_date || '')}\nCA: ${fmt(cycle.ca_brut)} FCFA\nMarge Nette: ${fmt(cycle.benefice_net)} FCFA`
     if (navigator.share) navigator.share({ title: 'Rapport CJS', text })
-    else navigator.clipboard.writeText(text).then(() => alert('Copié !'))
+    else { navigator.clipboard.writeText(text); showToast('Lien copié !') }
   }
 
-  if (loading) return (
-    <div className="p-6 flex items-center justify-center h-64">
-      <p className="text-stone-400 text-sm">Chargement...</p>
-    </div>
-  )
+  if (loading) return <div className="p-6 text-stone-400 text-sm">Chargement...</div>
 
   return (
-    <div className="p-4 lg:p-6 space-y-5">
+    <div style={{ fontFamily: "'Sora', sans-serif", background: '#f8f8f8', minHeight: '100vh', color: '#1a1a2e' }}>
       <style>{`
-        .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-        .two-col { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-        @media (max-width: 1024px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 640px) {
-          .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-          .two-col { grid-template-columns: 1fr; }
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+        .charges-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 12px; margin-bottom: 16px; }
+        .rep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 12px; }
+        .cycle-item { display: flex; align-items: center; gap: 20px; }
+        .cycle-stats { display: flex; gap: 24px; flex: 1; }
+        @media (max-width: 900px) {
+          .kpi-grid { grid-template-columns: repeat(2,1fr); }
+          .cycle-item { flex-wrap: wrap; }
+          .cycle-stats { flex-wrap: wrap; gap: 12px; }
+          .charges-grid { grid-template-columns: repeat(2,1fr); }
+          .rep-grid { grid-template-columns: repeat(2,1fr); }
         }
+        @media (max-width: 600px) {
+          .kpi-grid { grid-template-columns: repeat(2,1fr); }
+          .charges-grid { grid-template-columns: repeat(2,1fr); }
+          .rep-grid { grid-template-columns: 1fr 1fr; }
+        }
+        .charge-item { position: relative; }
+        .charge-edit-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .2s; background: none; border: none; cursor: pointer; color: #d4a843; }
+        .charge-item:hover .charge-edit-btn { opacity: 1; }
+        .rep-item { position: relative; }
+        .rep-edit-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .2s; background: none; border: none; cursor: pointer; color: #d4a843; }
+        .rep-item:hover .rep-edit-btn { opacity: 1; }
+        .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent, #d4a843); border-radius: 12px 12px 0 0; }
+        .btn-gold { background: linear-gradient(135deg, #d4a843, #b8881e); color: #000; font-weight: 600; border: none; padding: 9px 18px; border-radius: 8px; cursor: pointer; font-family: 'Sora',sans-serif; font-size: 13px; display: inline-flex; align-items: center; gap: 7px; transition: all .2s; }
+        .btn-gold:hover { opacity: .9; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(212,168,67,.3); }
+        .btn-ghost { background: white; color: #666; border: 1px solid #e0e0e0; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-family: 'Sora',sans-serif; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; transition: all .2s; }
+        .btn-ghost:hover { border-color: #aaa; color: #333; }
+        .btn-danger { background: #fff0f0; color: #e53e3e; border: 1px solid #fca5a5; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-family: 'Sora',sans-serif; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-danger:hover { background: #fee2e2; }
+        .form-input { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 9px 13px; color: #1a1a2e; font-family: 'Sora',sans-serif; font-size: 13px; outline: none; width: 100%; transition: border-color .2s; }
+        .form-input:focus { border-color: #d4a843; }
+        .section-card { background: white; border: 1px solid #eeeeee; border-radius: 14px; overflow: hidden; box-shadow: 0 1px 8px rgba(0,0,0,.04); }
+        .section-header { padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #f0f0f0; }
+        .section-body { padding: 20px 22px; }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 200; backdrop-filter: blur(4px); padding: 16px; }
+        .modal { background: white; border-radius: 18px; padding: 28px; width: 100%; max-width: 480px; box-shadow: 0 20px 60px rgba(0,0,0,.15); }
+        .detail-modal { max-width: 700px; max-height: 85vh; overflow-y: auto; }
+        .detail-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .detail-table th { text-align: left; padding: 8px 10px; color: #888; font-weight: 500; font-size: 11px; border-bottom: 1px solid #f0f0f0; }
+        .detail-table td { padding: 9px 10px; border-bottom: 1px solid #f5f5f5; }
+        .detail-table tr:hover td { background: #fafafa; }
+        .pulse { width: 7px; height: 7px; border-radius: 50%; background: #10b981; animation: pulse 1.8s infinite; display: inline-block; }
+        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.8)} }
+        .toast { position: fixed; bottom: 24px; right: 24px; background: #1a1a2e; color: white; border-radius: 10px; padding: 12px 20px; font-size: 13px; display: flex; align-items: center; gap: 10px; z-index: 300; box-shadow: 0 4px 20px rgba(0,0,0,.2); }
       `}</style>
 
-      {/* HEADER */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      {/* TOPBAR */}
+      <div style={{ background: 'white', borderBottom: '1px solid #eee', padding: '18px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 50 }}>
         <div>
-          <h1 className="text-xl font-semibold text-stone-800">Finance</h1>
-          <p className="text-stone-400 text-xs">
-            {activeCycle
-              ? `Cycle en cours depuis le ${formatDate(activeCycle.start_date)} · ${salesData.nb_ventes} vente(s)`
-              : `Mois en cours · ${salesData.nb_ventes} vente(s)`
-            }
-          </p>
+          <div style={{ fontSize: '20px', fontWeight: 700 }}>Finance</div>
+          <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>Vue d'ensemble financière · Douala, Cameroun (FCFA)</div>
         </div>
-        <button
-          onClick={() => setShowCloseConfirm(true)}
-          className="flex items-center gap-1.5 border border-red-300 hover:bg-red-50 text-red-500 px-4 py-2 rounded-lg text-sm font-medium"
-        >
-          Clôturer le cycle
+        <button className="btn-gold" onClick={() => setShowClotureModal(true)}>
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={15} height={15}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Clôturer cycle
         </button>
       </div>
 
-      {/* KPI */}
-      <div className="kpi-grid">
-        {[
-          { label: 'CA Brut', value: salesData.ca_brut, icon: TrendingUp, color: 'text-blue-500', bg: 'bg-blue-50', sub: `${salesData.nb_ventes} ventes` },
-          { label: 'CA Net', value: salesData.ca_net, icon: DollarSign, color: 'text-green-500', bg: 'bg-green-50', sub: 'Après réductions' },
-          { label: 'Marge Brute', value: marge_brute, icon: Percent, color: 'text-yellow-500', bg: 'bg-yellow-50', sub: salesData.ca_net > 0 ? `${Math.round((marge_brute / salesData.ca_net) * 100)}% du CA net` : '—' },
-          { label: 'Bénéfice Net', value: benefice_net, icon: DollarSign, color: 'text-purple-500', bg: 'bg-purple-50', sub: benefice_net > 0 ? 'Après charges' : '⚠ Charges non couvertes' },
-        ].map((kpi, i) => (
-          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
-            <div className="flex items-center gap-2 mb-3">
-              <div className={`${kpi.bg} p-2 rounded-lg`}>
-                <kpi.icon size={15} className={kpi.color} />
-              </div>
-              <p className="text-xs text-stone-400 font-medium">{kpi.label}</p>
+      <div style={{ padding: '28px', maxWidth: '1100px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+        {/* CYCLE BANNER */}
+        <div style={{ background: 'white', border: '1px solid #eee', borderRadius: '14px', padding: '20px 24px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', boxShadow: '0 1px 8px rgba(0,0,0,.04)', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#ecfdf5', color: '#10b981', border: '1px solid #a7f3d0', borderRadius: '20px', padding: '4px 12px', fontSize: '11px', fontWeight: 600, marginBottom: '8px' }}>
+              <span className="pulse" /> Cycle Actuel
             </div>
-            <p className="text-base font-bold text-stone-800 mb-0.5">{formatFCFA(kpi.value)}</p>
-            <p className="text-xs text-stone-400">{kpi.sub}</p>
+            <div style={{ fontSize: '22px', fontWeight: 700, color: '#d4a843', marginBottom: '4px' }}>
+              Depuis le {activeCycle ? fmtDate(activeCycle.start_date) : fmtDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())}
+            </div>
+            <div style={{ fontSize: '12px', color: '#888' }}>
+              {closedCycles.length > 0 ? `Dernier cycle clôturé le ${fmtDate(closedCycles[0].end_date || '')}` : 'Aucun cycle précédent'}
+            </div>
+            <div style={{ fontSize: '12px', color: '#888', marginTop: '10px', background: '#fafafa', borderRadius: '8px', padding: '8px 12px', borderLeft: '3px solid #d4a843', maxWidth: '500px' }}>
+              ℹ Toutes les ventes (boutique + site) sont comptabilisées. Après clôture, les compteurs reviennent à zéro.
+            </div>
           </div>
-        ))}
-      </div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div className="mono" style={{ fontSize: '40px', fontWeight: 700, color: '#1a1a2e' }}>{salesData.nb_ventes}</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>Ventes du cycle actuel</div>
+          </div>
+        </div>
 
-      {/* CHARGES FIXES + RÉPARTITION */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-        {/* CHARGES */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="font-semibold text-stone-800 text-sm">Charges fixes</h2>
-              <p className="text-xs text-stone-400">Total: <strong className="text-stone-600">{formatFCFA(totalCharges)}</strong></p>
+        {/* KPIs */}
+        <div className="kpi-grid">
+          {[
+            { label: 'CA Brut', value: salesData.ca_brut, sub: 'FCFA', accent: '#d4a843', iconBg: 'rgba(212,168,67,.1)' },
+            { label: 'CA Net', value: salesData.ca_net, sub: `FCFA · Remises: ${fmt(salesData.ca_brut - salesData.ca_net)} FCFA`, accent: '#5e9ef0', iconBg: 'rgba(94,158,240,.1)' },
+            { label: 'Marge Brute', value: margeBrute, sub: 'FCFA', accent: '#10b981', iconBg: 'rgba(16,185,129,.1)' },
+            { label: 'Marge Nette', value: margeNette, sub: margeNette > 0 ? 'FCFA · Après charges' : 'Charges non couvertes', accent: '#a084e8', iconBg: 'rgba(160,132,232,.1)' },
+          ].map((kpi, i) => (
+            <div key={i} className="kpi-card" style={{ background: 'white', border: '1px solid #eee', borderRadius: '14px', padding: '18px 20px', position: 'relative', overflow: 'hidden', boxShadow: '0 1px 8px rgba(0,0,0,.04)', ['--accent' as any]: kpi.accent } as any}>
+              <div style={{ fontSize: '11px', color: '#888', fontWeight: 500, marginBottom: '10px' }}>{kpi.label}</div>
+              <div className="mono" style={{ fontSize: '22px', fontWeight: 700, color: '#1a1a2e' }}>{fmt(kpi.value)}</div>
+              <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>{kpi.sub}</div>
+              <div style={{ position: 'absolute', top: '16px', right: '16px', width: '30px', height: '30px', borderRadius: '8px', background: kpi.iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg fill="none" viewBox="0 0 24 24" stroke={kpi.accent} strokeWidth={2} width={15} height={15}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+              </div>
             </div>
-            <button onClick={() => { setEditingCharge(null); setChargeForm({ name: '', amount: 0, category: 'autre' }); setShowChargeModal(true) }}
-              className="flex items-center gap-1 text-xs text-yellow-600 border border-yellow-300 px-2.5 py-1.5 rounded-lg font-medium">
-              <Plus size={12} /> Ajouter
+          ))}
+        </div>
+
+        {/* CHARGES FIXES */}
+        <div className="section-card">
+          <div className="section-header">
+            <div style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="#d4a843" strokeWidth={2} width={16} height={16}><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              Charges Fixes
+            </div>
+            <button className="btn-ghost" onClick={() => setShowAddCharge(!showAddCharge)}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={13} height={13}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Ajouter
             </button>
           </div>
-
-          {charges.length === 0 ? (
-            <p className="text-stone-400 text-xs text-center py-6">Aucune charge définie — cliquez sur Ajouter</p>
-          ) : (
-            <div className="space-y-2">
-              {charges.map(charge => (
-                <div key={charge.id} className="flex items-center justify-between bg-stone-50 rounded-xl p-2.5">
-                  <div>
-                    <p className="text-xs font-medium text-stone-700">{charge.name}</p>
-                    <p className="text-xs text-stone-400 capitalize">{charge.category}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-xs font-bold text-stone-800">{formatFCFA(charge.amount)}</p>
-                    <button onClick={() => { setEditingCharge(charge); setChargeForm({ name: charge.name, amount: charge.amount, category: charge.category }); setShowChargeModal(true) }}
-                      className="p-1 text-yellow-500 hover:bg-yellow-50 rounded">
-                      <Edit2 size={11} />
+          <div className="section-body">
+            {charges.length === 0 ? (
+              <p style={{ color: '#aaa', fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>Aucune charge définie</p>
+            ) : (
+              <div className="charges-grid">
+                {charges.map(c => (
+                  <div key={c.id} className="charge-item" style={{ background: '#fafafa', border: '1px solid #eee', borderRadius: '8px', padding: '14px 16px' }}>
+                    <div style={{ fontSize: '11px', color: '#888', fontWeight: 500 }}>{c.name}</div>
+                    <div className="mono" style={{ fontSize: '16px', fontWeight: 700, marginTop: '4px' }}>{fmt(c.amount)} <span style={{ fontSize: '11px', fontWeight: 400, color: '#aaa' }}>FCFA</span></div>
+                    <button className="charge-edit-btn" onClick={() => { setEditingCharge(c); setEditChargeForm({ name: c.name, amount: c.amount }); setShowEditChargeModal(true) }}>
+                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={12} height={12}><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
-                    <button onClick={() => handleDeleteCharge(charge.id)} className="p-1 text-red-400 hover:bg-red-50 rounded">
-                      <Trash2 size={11} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {marge_brute > 0 && charges.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-stone-100">
-              <div className="flex justify-between text-xs text-stone-400 mb-1">
-                <span>Saturation des charges</span>
-                <span>{Math.min(100, Math.round((totalCharges / marge_brute) * 100))}%</span>
-              </div>
-              <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${totalCharges > marge_brute ? 'bg-red-400' : 'bg-yellow-400'}`}
-                  style={{ width: `${Math.min(100, (totalCharges / marge_brute) * 100)}%` }} />
-              </div>
-              {totalCharges > marge_brute && (
-                <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                  <AlertTriangle size={10} /> Les charges dépassent la marge brute
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* RÉPARTITION */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="font-semibold text-stone-800 text-sm">Répartition du bénéfice</h2>
-              <p className="text-xs text-stone-400">
-                {repartTotal}% défini · {100 - repartTotal}% libre
-              </p>
-            </div>
-            <button onClick={() => { setEditingRepart(null); setRepartForm({ name: '', percentage: 0 }); setShowRepartModal(true) }}
-              className="flex items-center gap-1 text-xs text-yellow-600 border border-yellow-300 px-2.5 py-1.5 rounded-lg font-medium">
-              <Plus size={12} /> Ajouter
-            </button>
-          </div>
-
-          {benefice_net === 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 mb-3 text-xs text-amber-700 flex items-center gap-1.5">
-              <AlertTriangle size={12} />
-              La répartition s'applique uniquement après couverture des charges fixes
-            </div>
-          )}
-
-          {repartition.length === 0 ? (
-            <p className="text-stone-400 text-xs text-center py-6">Aucune règle définie — cliquez sur Ajouter</p>
-          ) : (
-            <div className="space-y-2">
-              {repartition.map(r => {
-                const montant = Math.round(benefice_net * r.percentage / 100)
-                return (
-                  <div key={r.id} className="bg-stone-50 rounded-xl p-2.5">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs font-medium text-stone-700">{r.name}</p>
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs font-bold text-yellow-600">{r.percentage}%</span>
-                        <button onClick={() => { setEditingRepart(r); setRepartForm({ name: r.name, percentage: r.percentage }); setShowRepartModal(true) }}
-                          className="p-1 text-yellow-500 hover:bg-yellow-50 rounded">
-                          <Edit2 size={11} />
-                        </button>
-                        <button onClick={() => handleDeleteRepart(r.id)} className="p-1 text-red-400 hover:bg-red-50 rounded">
-                          <Trash2 size={11} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 h-1.5 bg-stone-200 rounded-full overflow-hidden mr-3">
-                        <div className="h-full bg-yellow-400 rounded-full" style={{ width: `${r.percentage}%` }} />
-                      </div>
-                      <span className={`text-xs font-bold ${benefice_net > 0 ? 'text-stone-800' : 'text-stone-300'}`}>
-                        {formatFCFA(montant)}
-                      </span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {repartTotal > 100 && (
-            <p className="text-xs text-red-500 mt-2 flex items-center gap-1">
-              <AlertTriangle size={10} /> Total dépasse 100% ({repartTotal}%)
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* HISTORIQUE CYCLES */}
-      {closedCycles.length > 0 && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
-          <h2 className="font-semibold text-stone-800 text-sm mb-3">Historique des cycles clôturés</h2>
-          <div className="space-y-3">
-            {closedCycles.map(cycle => (
-              <div key={cycle.id} className="border border-stone-100 rounded-xl p-3">
-                <div className="flex items-start justify-between flex-wrap gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-stone-800">
-                      {formatDate(cycle.start_date)} → {formatDate(cycle.end_date || '')}
-                    </p>
-                    <div className="flex gap-3 mt-1 flex-wrap">
-                      <span className="text-xs text-stone-400">CA: <strong className="text-stone-600">{formatFCFA(cycle.ca_brut)}</strong></span>
-                      <span className="text-xs text-stone-400">Marge: <strong className="text-stone-600">{formatFCFA(cycle.marge_brute)}</strong></span>
-                      <span className="text-xs text-stone-400">Bénéfice: <strong className={cycle.benefice_net > 0 ? 'text-green-600' : 'text-red-500'}>{formatFCFA(cycle.benefice_net)}</strong></span>
-                    </div>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <button onClick={() => handleViewCycle(cycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
-                      <Eye size={11} /> Voir
-                    </button>
-                    <button onClick={() => handleDownloadCycle(cycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
-                      <Download size={11} /> PDF
-                    </button>
-                    <button onClick={() => handleShareCycle(cycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
-                      <Share2 size={11} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* MODAL CHARGE */}
-      {showChargeModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-semibold text-stone-800">{editingCharge ? 'Modifier la charge' : 'Nouvelle charge'}</h2>
-              <button onClick={() => { setShowChargeModal(false); setEditingCharge(null) }}><X size={16} className="text-stone-400" /></button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-stone-700 mb-1">Nom *</label>
-                <input value={chargeForm.name} onChange={e => setChargeForm({ ...chargeForm, name: e.target.value })}
-                  placeholder="Ex: Salaire vendeuse, Loyer..." className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-stone-700 mb-1">Montant (FCFA) *</label>
-                <input type="number" value={chargeForm.amount} onChange={e => setChargeForm({ ...chargeForm, amount: Number(e.target.value) })}
-                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-stone-700 mb-1">Catégorie</label>
-                <select value={chargeForm.category} onChange={e => setChargeForm({ ...chargeForm, category: e.target.value })}
-                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400">
-                  {['salaire', 'loyer', 'factures', 'internet', 'marketing', 'autre'].map(c => (
-                    <option key={c} value={c} className="capitalize">{c}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button onClick={handleSaveCharge} disabled={saving}
-                className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? '...' : editingCharge ? 'Modifier' : 'Ajouter'}
-              </button>
-              <button onClick={() => { setShowChargeModal(false); setEditingCharge(null) }}
-                className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL RÉPARTITION */}
-      {showRepartModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-semibold text-stone-800">{editingRepart ? 'Modifier' : 'Nouvelle répartition'}</h2>
-              <button onClick={() => { setShowRepartModal(false); setEditingRepart(null) }}><X size={16} className="text-stone-400" /></button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-stone-700 mb-1">Nom *</label>
-                <input value={repartForm.name} onChange={e => setRepartForm({ ...repartForm, name: e.target.value })}
-                  placeholder="Ex: Réinvestissement, Épargne, Marketing..." className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-stone-700 mb-1">
-                  Pourcentage (%) * — Restant disponible: {100 - repartTotal + (editingRepart?.percentage || 0)}%
-                </label>
-                <input type="number" min="1" max={100 - repartTotal + (editingRepart?.percentage || 0)}
-                  value={repartForm.percentage} onChange={e => setRepartForm({ ...repartForm, percentage: Number(e.target.value) })}
-                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
-              </div>
-              {benefice_net > 0 && repartForm.percentage > 0 && (
-                <div className="bg-green-50 rounded-lg p-3 text-xs text-green-700">
-                  Montant estimé: <strong>{formatFCFA(Math.round(benefice_net * repartForm.percentage / 100))}</strong>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button onClick={handleSaveRepart} disabled={saving}
-                className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? '...' : editingRepart ? 'Modifier' : 'Ajouter'}
-              </button>
-              <button onClick={() => { setShowRepartModal(false); setEditingRepart(null) }}
-                className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">Annuler</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CONFIRMATION CLÔTURE */}
-      {showCloseConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle size={18} className="text-red-500" />
-              </div>
-              <div>
-                <h2 className="font-semibold text-stone-800">Clôturer le cycle ?</h2>
-                <p className="text-xs text-red-400 font-medium">Action irrévocable</p>
-              </div>
-            </div>
-            <div className="bg-stone-50 rounded-xl p-3 mb-4 space-y-1.5 text-xs">
-              <div className="flex justify-between"><span className="text-stone-500">CA Brut</span><span className="font-medium">{formatFCFA(salesData.ca_brut)}</span></div>
-              <div className="flex justify-between"><span className="text-stone-500">CA Net</span><span className="font-medium">{formatFCFA(salesData.ca_net)}</span></div>
-              <div className="flex justify-between"><span className="text-stone-500">Marge brute</span><span className="font-medium">{formatFCFA(marge_brute)}</span></div>
-              <div className="flex justify-between"><span className="text-stone-500">Charges fixes</span><span className="font-medium">{formatFCFA(totalCharges)}</span></div>
-              <div className="flex justify-between border-t border-stone-200 pt-1.5 mt-1">
-                <span className="font-semibold">Bénéfice net</span>
-                <span className={`font-bold ${benefice_net > 0 ? 'text-green-600' : 'text-red-500'}`}>{formatFCFA(benefice_net)}</span>
-              </div>
-            </div>
-            <p className="text-sm text-stone-600 mb-4 text-center">Confirmez-vous la clôture définitive ?</p>
-            <div className="flex gap-2">
-              <button onClick={handleCloseCycle} disabled={saving}
-                className="flex-1 flex items-center justify-center gap-1.5 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-                <Check size={14} /> Oui, clôturer
-              </button>
-              <button onClick={() => setShowCloseConfirm(false)}
-                className="flex-1 border border-stone-300 text-stone-600 hover:bg-stone-50 py-2.5 rounded-lg text-sm">
-                Annuler
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* DÉTAIL CYCLE */}
-      {showCycleDetail && selectedCycle && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-stone-100 sticky top-0 bg-white">
-              <div>
-                <h2 className="font-semibold text-stone-800">Cycle {formatDate(selectedCycle.start_date)} → {formatDate(selectedCycle.end_date || '')}</h2>
-                <p className="text-xs text-stone-400">{cycleVentes.length} vente(s) enregistrée(s)</p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => handleDownloadCycle(selectedCycle)} className="flex items-center gap-1 text-xs border border-stone-200 hover:bg-stone-50 text-stone-600 px-2 py-1.5 rounded-lg">
-                  <Download size={11} /> Télécharger
-                </button>
-                <button onClick={() => setShowCycleDetail(false)}><X size={18} className="text-stone-400" /></button>
-              </div>
-            </div>
-
-            <div className="p-5 space-y-4">
-              {/* KPI résumé */}
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                {[
-                  { label: 'CA Brut', value: selectedCycle.ca_brut },
-                  { label: 'CA Net', value: selectedCycle.ca_net },
-                  { label: 'Coût de revient', value: selectedCycle.cout_revient },
-                  { label: 'Marge Brute', value: selectedCycle.marge_brute },
-                  { label: 'Charges fixes', value: selectedCycle.charges_fixes_total },
-                  { label: 'Bénéfice net', value: selectedCycle.benefice_net },
-                ].map((item, i) => (
-                  <div key={i} className="bg-stone-50 rounded-xl p-3">
-                    <p className="text-xs text-stone-400 mb-0.5">{item.label}</p>
-                    <p className={`text-sm font-bold ${i === 5 && item.value > 0 ? 'text-green-600' : i === 5 ? 'text-red-500' : 'text-stone-800'}`}>
-                      {formatFCFA(item.value)}
-                    </p>
                   </div>
                 ))}
               </div>
+            )}
+            <div style={{ background: '#fff0f0', border: '1px solid #fca5a5', borderRadius: '8px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', color: '#e53e3e', fontWeight: 500 }}>Total Charges Fixes</span>
+              <span className="mono" style={{ fontSize: '18px', fontWeight: 700, color: '#e53e3e' }}>{fmt(totalCharges)} FCFA</span>
+            </div>
+            {showAddCharge && (
+              <div style={{ marginTop: '14px', background: '#fafafa', padding: '14px', borderRadius: '8px', border: '1px dashed #ddd', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input className="form-input" style={{ flex: 1, minWidth: '140px' }} placeholder="Nom de la charge (ex: Loyer)" value={chargeForm.name} onChange={e => setChargeForm({ ...chargeForm, name: e.target.value })} />
+                <input className="form-input" style={{ flex: 1, minWidth: '120px' }} type="number" placeholder="Montant FCFA" value={chargeForm.amount || ''} onChange={e => setChargeForm({ ...chargeForm, amount: Number(e.target.value) })} />
+                <button className="btn-gold" onClick={handleAddCharge}>Ajouter</button>
+              </div>
+            )}
+          </div>
+        </div>
 
-              {/* Ventes */}
-              <div>
-                <h3 className="text-sm font-semibold text-stone-700 mb-2">Détail des ventes</h3>
-                {cycleVentes.length === 0 ? (
-                  <p className="text-stone-400 text-xs text-center py-4">Aucune vente trouvée pour cette période</p>
-                ) : (
-                  <div className="space-y-2">
-                    {cycleVentes.map((vente, i) => {
-                      const coutVente = (vente.sale_items || []).reduce((s: number, item: any) => s + (item.unit_cost || 0) * item.quantity, 0)
-                      const margeVente = vente.total - coutVente
-                      return (
-                        <div key={i} className="border border-stone-100 rounded-xl p-3">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <p className="text-xs font-medium text-stone-700">{vente.customer_name || vente.customer?.full_name || 'Client anonyme'}</p>
-                              <p className="text-xs text-stone-400">{formatDate(vente.created_at)} · {vente.payment_method || '—'}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm font-bold text-stone-800">{formatFCFA(vente.total)}</p>
-                              <p className="text-xs text-green-600">Marge: {formatFCFA(margeVente)}</p>
-                            </div>
-                          </div>
-                          {(vente.sale_items || []).map((item: any, j: number) => (
-                            <div key={j} className="flex justify-between text-xs text-stone-400 bg-stone-50 rounded-lg px-2 py-1 mt-1">
-                              <span>{item.product_name} {item.variant_name || ''} x{item.quantity}</span>
-                              <span>Revient: {formatFCFA((item.unit_cost || 0) * item.quantity)}</span>
-                            </div>
-                          ))}
+        {/* RÉPARTITION */}
+        <div className="section-card">
+          <div className="section-header">
+            <div style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="#d4a843" strokeWidth={2} width={16} height={16}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Répartition Automatique
+            </div>
+            <button className="btn-ghost" onClick={() => setShowAddRep(!showAddRep)}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={13} height={13}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Ajouter
+            </button>
+          </div>
+          <div className="section-body">
+            <div style={{ background: 'rgba(212,168,67,.08)', border: '1px solid rgba(212,168,67,.2)', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#b8881e', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={14} height={14}><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              Important : Les charges fixes doivent être couvertes AVANT la répartition sur la marge nette
+            </div>
+            <div style={{ background: '#f0faf6', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#555', fontFamily: "'JetBrains Mono', monospace", marginBottom: '16px', borderLeft: '3px solid #10b981' }}>
+              Marge Brute ({fmt(margeBrute)} FCFA) − Charges Fixes ({fmt(totalCharges)} FCFA) = Marge Nette ({fmt(margeNette)} FCFA)<br />
+              <span style={{ color: '#aaa' }}>La répartition s'applique uniquement sur la marge nette positive</span>
+            </div>
+            {repartition.length === 0 ? (
+              <p style={{ color: '#aaa', fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>Aucune règle de répartition définie</p>
+            ) : (
+              <div className="rep-grid">
+                {repartition.map(r => {
+                  const val = Math.round(margeNette * r.percentage / 100)
+                  return (
+                    <div key={r.id} className="rep-item" style={{ background: '#fafafa', border: '1px solid #eee', borderRadius: '8px', padding: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <div style={{ fontSize: '12px', color: '#888', fontWeight: 500 }}>{r.name}</div>
+                        <div style={{ fontSize: '11px', fontWeight: 700, background: 'rgba(212,168,67,.15)', color: '#d4a843', borderRadius: '4px', padding: '2px 7px' }}>{r.percentage}%</div>
+                      </div>
+                      <div className="mono" style={{ fontSize: '18px', fontWeight: 700 }}>{fmt(val)} <span style={{ fontSize: '11px', fontWeight: 400, color: '#aaa' }}>FCFA</span></div>
+                      <div style={{ height: '3px', background: '#eee', borderRadius: '2px', marginTop: '10px' }}>
+                        <div style={{ height: '100%', background: '#d4a843', borderRadius: '2px', width: `${r.percentage}%` }} />
+                      </div>
+                      <button className="rep-edit-btn" onClick={() => { setEditingRep(r); setEditRepForm({ name: r.name, percentage: r.percentage }); setShowEditRepModal(true) }}>
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={12} height={12}><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div style={{ marginTop: '12px', fontSize: '12px', fontWeight: 500, color: totalRepPct > 100 ? '#e53e3e' : totalRepPct === 100 ? '#10b981' : '#d4a843' }}>
+              Total réparti : {totalRepPct}% {totalRepPct > 100 ? '⚠ Dépasse 100%' : totalRepPct === 100 ? '✓' : `(${100 - totalRepPct}% non affecté)`}
+            </div>
+            {showAddRep && (
+              <div style={{ marginTop: '14px', background: '#fafafa', padding: '14px', borderRadius: '8px', border: '1px dashed #ddd', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input className="form-input" style={{ flex: 1, minWidth: '140px' }} placeholder="Nom (ex: Épargne)" value={repForm.name} onChange={e => setRepForm({ ...repForm, name: e.target.value })} />
+                <input className="form-input" style={{ flex: '0 0 100px' }} type="number" placeholder="%" min={1} max={100} value={repForm.percentage || ''} onChange={e => setRepForm({ ...repForm, percentage: Number(e.target.value) })} />
+                <button className="btn-gold" onClick={handleAddRep}>Ajouter</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* CYCLES CLÔTURÉS */}
+        {closedCycles.length > 0 && (
+          <div className="section-card">
+            <div className="section-header">
+              <div style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg fill="none" viewBox="0 0 24 24" stroke="#d4a843" strokeWidth={2} width={16} height={16}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Cycles Clôturés
+                <span style={{ background: '#f0f0f0', color: '#888', borderRadius: '6px', padding: '1px 8px', fontSize: '12px', fontWeight: 400 }}>{closedCycles.length}</span>
+              </div>
+            </div>
+            <div className="section-body">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {closedCycles.map(cycle => (
+                  <div key={cycle.id} className="cycle-item" style={{ background: '#fafafa', border: '1px solid #eee', borderRadius: '8px', padding: '18px 20px', flexWrap: 'wrap', gap: '16px' }}>
+                    <div style={{ flex: '0 0 auto', minWidth: '180px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600 }}>{fmtDate(cycle.start_date)} → {fmtDate(cycle.end_date || '')}</div>
+                      <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>Clôturé le {fmtDate(cycle.end_date || '')}</div>
+                    </div>
+                    <div className="cycle-stats" style={{ flex: 1, flexWrap: 'wrap', gap: '20px' }}>
+                      {[
+                        { label: 'CA Brut', value: fmt(cycle.ca_brut) + ' F' },
+                        { label: 'CA Net', value: fmt(cycle.ca_net) + ' F' },
+                        { label: 'Marge Brute', value: fmt(cycle.marge_brute) + ' F' },
+                        { label: 'Marge Nette', value: fmt(cycle.benefice_net) + ' F', green: true },
+                      ].map((stat, i) => (
+                        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ fontSize: '10px', color: '#aaa', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.3px' }}>{stat.label}</div>
+                          <div className="mono" style={{ fontSize: '13px', fontWeight: 700, color: stat.green ? '#10b981' : '#1a1a2e' }}>{stat.value}</div>
                         </div>
-                      )
-                    })}
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
+                      <button className="btn-ghost" onClick={() => handleViewCycle(cycle)}>
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={13} height={13}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        Voir
+                      </button>
+                      <button className="btn-ghost" onClick={() => handleShare(cycle)}>
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={13} height={13}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                        Partager
+                      </button>
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
             </div>
           </div>
+        )}
+      </div>
+
+      {/* MODAL CLÔTURE */}
+      {showClotureModal && (
+        <div className="modal-overlay" onClick={() => setShowClotureModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>🔒 Clôturer le cycle actuel</div>
+            <div style={{ fontSize: '13px', color: '#888', marginBottom: '20px', lineHeight: 1.6 }}>
+              Vous allez archiver toutes les données du cycle en cours. Un nouveau cycle démarrera immédiatement.
+            </div>
+            <div style={{ background: '#fff0f0', border: '1px solid #fca5a5', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#e53e3e', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={14} height={14} style={{ flexShrink: 0, marginTop: '1px' }}><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>Cette action est <strong>irréversible</strong>. Assurez-vous que toutes les ventes ont été enregistrées.</span>
+            </div>
+            <div style={{ background: '#fafafa', borderRadius: '8px', padding: '12px', marginBottom: '20px', fontSize: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#888' }}>CA Brut</span><span className="mono" style={{ fontWeight: 600 }}>{fmt(salesData.ca_brut)} FCFA</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#888' }}>Marge Brute</span><span className="mono" style={{ fontWeight: 600 }}>{fmt(margeBrute)} FCFA</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ color: '#888' }}>Charges Fixes</span><span className="mono" style={{ fontWeight: 600 }}>{fmt(totalCharges)} FCFA</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid #eee', marginTop: '4px' }}><span style={{ fontWeight: 600 }}>Marge Nette</span><span className="mono" style={{ fontWeight: 700, color: margeNette > 0 ? '#10b981' : '#e53e3e' }}>{fmt(margeNette)} FCFA</span></div>
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ fontSize: '12px', color: '#888', display: 'block', marginBottom: '6px' }}>Tapez <strong>CONFIRMER</strong> pour valider :</label>
+              <input className="form-input" placeholder="CONFIRMER" value={clotureConfirm} onChange={e => setClotureConfirm(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => { setShowClotureModal(false); setClotureConfirm('') }}>Annuler</button>
+              <button className="btn-danger" disabled={clotureConfirm !== 'CONFIRMER' || saving} onClick={handleCloture}>
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={14} height={14}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                {saving ? '...' : 'Clôturer définitivement'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT CHARGE */}
+      {showEditChargeModal && editingCharge && (
+        <div className="modal-overlay" onClick={() => setShowEditChargeModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>✏️ Modifier la charge</div>
+            <div style={{ fontSize: '13px', color: '#888', marginBottom: '20px' }}>Mettez à jour les informations de cette charge fixe.</div>
+            <input className="form-input" style={{ marginBottom: '10px' }} placeholder="Nom de la charge" value={editChargeForm.name} onChange={e => setEditChargeForm({ ...editChargeForm, name: e.target.value })} />
+            <input className="form-input" style={{ marginBottom: '20px' }} type="number" placeholder="Montant FCFA" value={editChargeForm.amount || ''} onChange={e => setEditChargeForm({ ...editChargeForm, amount: Number(e.target.value) })} />
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button className="btn-danger" onClick={handleDeleteCharge}>Supprimer</button>
+              <button className="btn-ghost" onClick={() => setShowEditChargeModal(false)}>Annuler</button>
+              <button className="btn-gold" onClick={handleSaveCharge}>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT REP */}
+      {showEditRepModal && editingRep && (
+        <div className="modal-overlay" onClick={() => setShowEditRepModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>✏️ Modifier la répartition</div>
+            <div style={{ fontSize: '13px', color: '#888', marginBottom: '20px' }}>Mettez à jour les informations de cette catégorie.</div>
+            <input className="form-input" style={{ marginBottom: '10px' }} placeholder="Nom" value={editRepForm.name} onChange={e => setEditRepForm({ ...editRepForm, name: e.target.value })} />
+            <input className="form-input" style={{ marginBottom: '20px' }} type="number" placeholder="% de la marge nette" min={1} max={100} value={editRepForm.percentage || ''} onChange={e => setEditRepForm({ ...editRepForm, percentage: Number(e.target.value) })} />
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button className="btn-danger" onClick={handleDeleteRep}>Supprimer</button>
+              <button className="btn-ghost" onClick={() => setShowEditRepModal(false)}>Annuler</button>
+              <button className="btn-gold" onClick={handleSaveRep}>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DÉTAIL CYCLE */}
+      {showDetailModal && selectedCycle && (
+        <div className="modal-overlay" onClick={() => setShowDetailModal(false)}>
+          <div className="modal detail-modal" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>
+              Cycle : {fmtDate(selectedCycle.start_date)} → {fmtDate(selectedCycle.end_date || '')}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '10px', marginBottom: '20px' }}>
+              {[
+                ['CA Brut', fmt(selectedCycle.ca_brut) + ' FCFA'],
+                ['CA Net', fmt(selectedCycle.ca_net) + ' FCFA'],
+                ['Marge Brute', fmt(selectedCycle.marge_brute) + ' FCFA'],
+                ['Charges Fixes', fmt(selectedCycle.charges_fixes_total) + ' FCFA'],
+                ['Marge Nette', fmt(selectedCycle.benefice_net) + ' FCFA'],
+              ].map(([l, v], i) => (
+                <div key={i} style={{ background: '#fafafa', border: '1px solid #eee', borderRadius: '8px', padding: '12px' }}>
+                  <div style={{ fontSize: '10px', color: '#aaa', fontWeight: 500, marginBottom: '4px' }}>{l}</div>
+                  <div className="mono" style={{ fontSize: '13px', fontWeight: 700, color: i === 4 && selectedCycle.benefice_net > 0 ? '#10b981' : '#1a1a2e' }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: '#aaa', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid #f0f0f0' }}>
+              Liste des ventes
+            </div>
+            {cycleVentes.length === 0 ? (
+              <p style={{ color: '#aaa', fontSize: '13px' }}>Aucune vente pour cette période.</p>
+            ) : (
+              <table className="detail-table">
+                <thead>
+                  <tr>
+                    <th>Date</th><th>Client</th><th>Articles</th><th>Revient</th><th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cycleVentes.map((v, i) => {
+                    const cout = (v.sale_items || []).reduce((s: number, item: any) => s + (item.unit_cost || 0) * item.quantity, 0)
+                    return (
+                      <tr key={i}>
+                        <td>{new Date(v.created_at).toLocaleDateString('fr-FR')}</td>
+                        <td>{v.customer_name || v.customer?.full_name || '—'}</td>
+                        <td>{(v.sale_items || []).length} article(s)</td>
+                        <td className="mono">{fmt(cout)} F</td>
+                        <td className="mono" style={{ fontWeight: 700 }}>{fmt(v.total)} F</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button className="btn-ghost" onClick={() => handleShare(selectedCycle)}>
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} width={13} height={13}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                Partager
+              </button>
+              <button className="btn-ghost" onClick={() => setShowDetailModal(false)}>Fermer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOAST */}
+      {toast && (
+        <div className="toast">
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
+          {toast}
         </div>
       )}
     </div>
