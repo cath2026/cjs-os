@@ -143,37 +143,7 @@ export default function ProduitsPage() {
 
     if (productError || !product) { setError('Erreur lors de la création'); setSaving(false); return }
 
-    const uploadWithRetry = async (file: File, slot: 1 | 2 | 3): Promise<string | null> => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const url = await uploadImage(product.id, file, slot)
-        if (url) return url
-        await new Promise(r => setTimeout(r, 1000))
-      }
-      return null
-    }
-
-    // Fermer modal immédiatement
-    setSaving(false); setShowCreateModal(false)
-    setForm({ name: '', nameen: '', category_id: '', description: '' })
-    setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
-    setImageFile1(null); setImageFile2(null); setImageFile3(null)
-    setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
-    fetchProducts(); fetchCategories()
-
-    // Upload images en arrière-plan
-    const uploadAll = async () => {
-      const imageUrls: Record<string, string> = {}
-      if (imageFile1) { const url = await uploadWithRetry(imageFile1, 1); if (url) imageUrls.image_url = url }
-      if (imageFile2) { const url = await uploadWithRetry(imageFile2, 2); if (url) imageUrls.image_url_2 = url }
-      if (imageFile3) { const url = await uploadWithRetry(imageFile3, 3); if (url) imageUrls.image_url_3 = url }
-      if (Object.keys(imageUrls).length > 0) {
-        await supabase.from('products').update(imageUrls).eq('id', product.id)
-        fetchProducts()
-      }
-    }
-    uploadAll()
-    return
-
+    // Créer les variantes et barcodes
     for (let i = 0; i < variants.length; i++) {
       const barcode = `CJS-${cat.prefix}-${String(cat.next_ref_number + i).padStart(4, '0')}`
       await supabase.from('variants').insert({ shop_id: SHOP_ID, product_id: product.id, name: variants[i].name, sale_price: variants[i].sale_price, cost_price: variants[i].cost_price, stock_quantity: variants[i].stock_quantity, barcode })
@@ -181,6 +151,51 @@ export default function ProduitsPage() {
     }
 
     await supabase.from('categories').update({ next_ref_number: cat.next_ref_number + variants.length }).eq('id', cat.id)
+
+    // Fermer modal immédiatement
+    setSaving(false)
+    setShowCreateModal(false)
+    setForm({ name: '', nameen: '', category_id: '', description: '' })
+    setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
+
+    const capturedFile1 = imageFile1
+    const capturedFile2 = imageFile2
+    const capturedFile3 = imageFile3
+    setImageFile1(null); setImageFile2(null); setImageFile3(null)
+    setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
+
+    fetchProducts(); fetchCategories()
+
+    // Upload images en arrière-plan
+    const uploadAll = async () => {
+      const imageUrls: Record<string, string> = {}
+      if (capturedFile1) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const url = await uploadImage(product.id, capturedFile1, 1)
+          if (url) { imageUrls.image_url = url; break }
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
+      if (capturedFile2) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const url = await uploadImage(product.id, capturedFile2, 2)
+          if (url) { imageUrls.image_url_2 = url; break }
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
+      if (capturedFile3) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const url = await uploadImage(product.id, capturedFile3, 3)
+          if (url) { imageUrls.image_url_3 = url; break }
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
+      if (Object.keys(imageUrls).length > 0) {
+        await supabase.from('products').update(imageUrls).eq('id', product.id)
+        fetchProducts()
+      }
+    }
+    uploadAll()
   }
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
@@ -276,7 +291,7 @@ export default function ProduitsPage() {
                   ? <img src={product.image_url} alt={product.name} className="w-full aspect-square object-cover" />
                   : <div className="w-full aspect-square bg-stone-100 flex items-center justify-center"><Image size={20} className="text-stone-300" /></div>
                 }
-                {(product.stock || 0) === 0 && (
+                {(product.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0) === 0 && (
                   <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
                     <span className="text-white text-xs font-bold bg-red-500 px-2 py-0.5 rounded-full">Rupture</span>
                   </div>
@@ -291,8 +306,8 @@ export default function ProduitsPage() {
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full inline-block mt-0.5 truncate max-w-full">{product.category?.name}</span>
                 <div className="flex justify-between items-center mt-1">
                   <span className={`text-xs font-bold ${(product.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0) === 0 ? 'text-red-500' : 'text-stone-600'}`}>
-  Stock: {product.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0}
-</span>
+                    Stock: {product.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0}
+                  </span>
                   <span className="text-xs text-yellow-600 font-medium">{formatFCFA(product.price || 0)}</span>
                 </div>
               </div>
@@ -334,8 +349,8 @@ export default function ProduitsPage() {
               <div className="flex flex-wrap items-center gap-2 mb-3">
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">{selectedProduct.category?.name}</span>
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${(selectedProduct.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0) === 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-  Stock total: {selectedProduct.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0}
-</span>
+                  Stock total: {selectedProduct.variants?.reduce((s, v) => s + v.stock_quantity, 0) || 0}
+                </span>
               </div>
               <p className="text-xs font-mono text-stone-400 mb-1">{selectedProduct.barcode}</p>
               {selectedProduct.description && <p className="text-xs text-stone-500 mb-3">{selectedProduct.description}</p>}
@@ -390,7 +405,7 @@ export default function ProduitsPage() {
 
             {/* 3 IMAGES */}
             <div className="mb-4">
-              <label className="block text-xs font-medium text-stone-700 mb-2">Photos (3 max)</label>
+              <label className="block text-xs font-medium text-stone-700 mb-2">Photos (optionnel — ajoutées en arrière-plan)</label>
               <div className="grid grid-cols-3 gap-2">
                 {([
                   { slot: 1 as const, preview: imagePreview1, ref: fileInputRef1 },
@@ -459,7 +474,7 @@ export default function ProduitsPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-stone-500 mb-1">Nom</label>
+                      <label className="block text-xs text-stone-500 mb-1">Nom *</label>
                       <input value={variant.name} onChange={(e) => updateVariant(index, 'name', e.target.value)}
                         placeholder="Ex: 40cm..." className="w-full border border-stone-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400" />
                     </div>
@@ -486,12 +501,12 @@ export default function ProduitsPage() {
               ))}
             </div>
 
-            {error && <p className="text-red-500 text-xs mb-3">{error}</p>}
+            {error && <p className="text-red-500 text-xs mb-3 bg-red-50 p-2 rounded-lg">{error}</p>}
 
             <div className="flex gap-2">
               <button onClick={handleSave} disabled={saving}
                 className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-                {saving ? 'Création en cours...' : 'Créer le produit'}
+                {saving ? 'Création...' : 'Créer le produit'}
               </button>
               <button onClick={() => setShowCreateModal(false)}
                 className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
