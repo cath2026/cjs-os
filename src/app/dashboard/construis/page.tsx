@@ -100,19 +100,22 @@ export default function ConstruisPage() {
       return
     }
 
-    if (imageFile) {
-      const url = await uploadImage(part.id)
-      if (url) {
-        await supabase.from('custom_parts').update({ image_url: url }).eq('id', part.id)
-      }
-    }
-
     setSaving(false)
     setShowModal(false)
     setForm({ type: activeTab, name: '', name_en: '', price: '', cost_price: '', stock: '' })
     setImageFile(null)
     setImagePreview(null)
+    // Afficher immédiatement sans attendre l'image
     fetchParts()
+
+    // Upload image en arrière-plan
+    if (imageFile) {
+      uploadImage(part.id).then(url => {
+        if (url) {
+          supabase.from('custom_parts').update({ image_url: url }).eq('id', part.id).then(() => fetchParts())
+        }
+      })
+    }
   }
 
   const handleDelete = async (id: string) => {

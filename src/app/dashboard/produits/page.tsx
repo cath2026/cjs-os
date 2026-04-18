@@ -152,11 +152,27 @@ export default function ProduitsPage() {
       return null
     }
 
-    const imageUrls: Record<string, string> = {}
-    if (imageFile1) { const url = await uploadWithRetry(imageFile1, 1); if (url) imageUrls.image_url = url }
-    if (imageFile2) { const url = await uploadWithRetry(imageFile2, 2); if (url) imageUrls.image_url_2 = url }
-    if (imageFile3) { const url = await uploadWithRetry(imageFile3, 3); if (url) imageUrls.image_url_3 = url }
-    if (Object.keys(imageUrls).length > 0) await supabase.from('products').update(imageUrls).eq('id', product.id)
+    // Fermer modal immédiatement
+    setSaving(false); setShowCreateModal(false)
+    setForm({ name: '', nameen: '', category_id: '', description: '' })
+    setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
+    setImageFile1(null); setImageFile2(null); setImageFile3(null)
+    setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
+    fetchProducts(); fetchCategories()
+
+    // Upload images en arrière-plan
+    const uploadAll = async () => {
+      const imageUrls: Record<string, string> = {}
+      if (imageFile1) { const url = await uploadWithRetry(imageFile1, 1); if (url) imageUrls.image_url = url }
+      if (imageFile2) { const url = await uploadWithRetry(imageFile2, 2); if (url) imageUrls.image_url_2 = url }
+      if (imageFile3) { const url = await uploadWithRetry(imageFile3, 3); if (url) imageUrls.image_url_3 = url }
+      if (Object.keys(imageUrls).length > 0) {
+        await supabase.from('products').update(imageUrls).eq('id', product.id)
+        fetchProducts()
+      }
+    }
+    uploadAll()
+    return
 
     for (let i = 0; i < variants.length; i++) {
       const barcode = `CJS-${cat.prefix}-${String(cat.next_ref_number + i).padStart(4, '0')}`
@@ -165,13 +181,6 @@ export default function ProduitsPage() {
     }
 
     await supabase.from('categories').update({ next_ref_number: cat.next_ref_number + variants.length }).eq('id', cat.id)
-
-    setSaving(false); setShowCreateModal(false)
-    setForm({ name: '', nameen: '', category_id: '', description: '' })
-    setVariants([{ name: '', sale_price: 0, cost_price: 0, stock_quantity: 0 }])
-    setImageFile1(null); setImageFile2(null); setImageFile3(null)
-    setImagePreview1(null); setImagePreview2(null); setImagePreview3(null)
-    fetchProducts(); fetchCategories()
   }
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
