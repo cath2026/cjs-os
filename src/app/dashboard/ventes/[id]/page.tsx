@@ -243,14 +243,11 @@ export default function VenteDetailPage() {
     if (!sale) return
     setSaving(true)
 
-    await supabase
-      .from('sales')
-      .update({
-        status: newStatus,
-        paid_at: newStatus === 'paid' ? new Date().toISOString() : sale.paid_at,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', sale.id)
+    await supabase.from('sales').update({
+      status: newStatus,
+      paid_at: newStatus === 'paid' ? new Date().toISOString() : sale.paid_at,
+      updated_at: new Date().toISOString(),
+    }).eq('id', sale.id)
 
     await supabase.from('logs').insert({
       shop_id: SHOP_ID,
@@ -258,6 +255,46 @@ export default function VenteDetailPage() {
       module: 'ventes',
       reference_id: sale.id,
     })
+
+    // Décrémenter stock quand on passe de draft à in_delivery
+    if (sale.status === 'draft' && newStatus === 'in_delivery') {
+      for (const item of sale.sale_items) {
+        if (item.variant_id) {
+          const { data: v } = await supabase
+            .from('variants')
+            .select('stock_quantity, product_id')
+            .eq('id', item.variant_id)
+            .single()
+          if (v) {
+            const newQty = Math.max(0, v.stock_quantity - item.quantity)
+            await supabase.from('variants').update({ stock_quantity: newQty }).eq('id', item.variant_id)
+            const { data: prodVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', v.product_id)
+            const totalStock = (prodVariants || []).reduce((s: number, pv: any) => s + pv.stock_quantity, 0)
+            await supabase.from('products').update({ stock: totalStock }).eq('id', v.product_id)
+          }
+        }
+      }
+    }
+
+    // Restaurer stock si annulation
+    if (newStatus === 'cancelled' && (sale.status === 'in_delivery' || sale.status === 'paid')) {
+      for (const item of sale.sale_items) {
+        if (item.variant_id) {
+          const { data: v } = await supabase
+            .from('variants')
+            .select('stock_quantity, product_id')
+            .eq('id', item.variant_id)
+            .single()
+          if (v) {
+            const restoredQty = v.stock_quantity + item.quantity
+            await supabase.from('variants').update({ stock_quantity: restoredQty }).eq('id', item.variant_id)
+            const { data: prodVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', v.product_id)
+            const totalStock = (prodVariants || []).reduce((s: number, pv: any) => s + pv.stock_quantity, 0)
+            await supabase.from('products').update({ stock: totalStock }).eq('id', v.product_id)
+          }
+        }
+      }
+    }
 
     setSaving(false)
     fetchSale()
