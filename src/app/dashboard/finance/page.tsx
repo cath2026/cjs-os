@@ -245,7 +245,7 @@ export default function FinancePage() {
         doc.setFont('helvetica', 'normal')
         doc.text(label as string, 22, y + 2)
 
-        doc.setTextColor(isBold ? ...[16, 185, 129] as [number, number, number] : ...black as [number, number, number])
+        if (isBold) { doc.setTextColor(16, 185, 129) } else { doc.setTextColor(...black) }
         doc.setFont('helvetica', 'bold')
         doc.text(value as string, 188, y + 2, { align: 'right' })
         y += 10
