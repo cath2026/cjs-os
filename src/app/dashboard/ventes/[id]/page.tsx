@@ -27,20 +27,11 @@ type Variant = {
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
-async function decrementStock(supabase: any, variantId: string, quantity: number) {
+// delta positif = restaurer, delta négatif = décrémenter
+async function adjustStock(supabase: any, variantId: string, delta: number) {
   const { data: v } = await supabase.from('variants').select('stock_quantity, product_id').eq('id', variantId).single()
   if (!v) return
-  const newQty = Math.max(0, v.stock_quantity - quantity)
-  await supabase.from('variants').update({ stock_quantity: newQty }).eq('id', variantId)
-  const { data: pv } = await supabase.from('variants').select('stock_quantity').eq('product_id', v.product_id)
-  const total = (pv || []).reduce((s: number, x: any) => s + x.stock_quantity, 0)
-  await supabase.from('products').update({ stock: total }).eq('id', v.product_id)
-}
-
-async function restoreStock(supabase: any, variantId: string, quantity: number) {
-  const { data: v } = await supabase.from('variants').select('stock_quantity, product_id').eq('id', variantId).single()
-  if (!v) return
-  const newQty = v.stock_quantity + quantity
+  const newQty = Math.max(0, v.stock_quantity + delta)
   await supabase.from('variants').update({ stock_quantity: newQty }).eq('id', variantId)
   const { data: pv } = await supabase.from('variants').select('stock_quantity').eq('product_id', v.product_id)
   const total = (pv || []).reduce((s: number, x: any) => s + x.stock_quantity, 0)
@@ -140,21 +131,20 @@ export default function VenteDetailPage() {
     setSaving(true)
     setError('')
 
-    // ÉTAPE 1 — Restaurer le stock des anciens articles
+    // Restaurer stock anciens articles (+)
     for (const oldItem of sale!.sale_items) {
       if (oldItem.variant_id) {
-        await restoreStock(supabase, oldItem.variant_id, oldItem.quantity)
+        await adjustStock(supabase, oldItem.variant_id, +oldItem.quantity)
       }
     }
 
-    // ÉTAPE 2 — Décrémenter le stock des nouveaux articles
+    // Décrémenter stock nouveaux articles (-)
     for (const newItem of editCart) {
       if (newItem.variant_id) {
-        await decrementStock(supabase, newItem.variant_id, newItem.quantity)
+        await adjustStock(supabase, newItem.variant_id, -newItem.quantity)
       }
     }
 
-    // ÉTAPE 3 — Mettre à jour la vente
     await supabase.from('sales').update({
       customer_name: editCustomerName || null,
       acquisition_source: editSource || null,
@@ -168,7 +158,6 @@ export default function VenteDetailPage() {
       updated_at: new Date().toISOString(),
     }).eq('id', id)
 
-    // ÉTAPE 4 — Supprimer anciens articles et réinsérer nouveaux
     await supabase.from('sale_items').delete().eq('sale_id', id)
     await supabase.from('sale_items').insert(
       editCart.map(item => ({
@@ -207,19 +196,19 @@ export default function VenteDetailPage() {
       module: 'ventes', reference_id: sale.id,
     })
 
-    // draft → in_delivery : décrémenter le stock
+    // draft → in_delivery : décrémenter (-)
     if (sale.status === 'draft' && newStatus === 'in_delivery') {
       for (const item of sale.sale_items) {
-        if (item.variant_id) await decrementStock(supabase, item.variant_id, item.quantity)
+        if (item.variant_id) await adjustStock(supabase, item.variant_id, -item.quantity)
       }
     }
 
-    // in_delivery → paid : NE PAS décrémenter (déjà fait au passage en livraison)
+    // in_delivery → paid : rien (déjà décrémenté)
 
-    // Annulation depuis in_delivery ou paid : restaurer le stock
+    // cancelled depuis in_delivery ou paid : restaurer (+)
     if (newStatus === 'cancelled' && (sale.status === 'in_delivery' || sale.status === 'paid')) {
       for (const item of sale.sale_items) {
-        if (item.variant_id) await restoreStock(supabase, item.variant_id, item.quantity)
+        if (item.variant_id) await adjustStock(supabase, item.variant_id, +item.quantity)
       }
     }
 
@@ -238,10 +227,10 @@ export default function VenteDetailPage() {
       updated_at: new Date().toISOString(),
     }).eq('id', id)
 
-    // Restaurer le stock si la vente était en livraison ou payée
+    // Restaurer stock si vente était active (+)
     if (sale && (sale.status === 'in_delivery' || sale.status === 'paid')) {
       for (const item of sale.sale_items) {
-        if (item.variant_id) await restoreStock(supabase, item.variant_id, item.quantity)
+        if (item.variant_id) await adjustStock(supabase, item.variant_id, +item.quantity)
       }
     }
 
@@ -286,7 +275,6 @@ export default function VenteDetailPage() {
 
   return (
     <div className="p-4 lg:p-6">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <button onClick={() => router.back()} className="p-2 hover:bg-stone-100 rounded-lg flex-shrink-0">
           <ArrowLeft size={16} className="text-stone-600" />
@@ -346,7 +334,6 @@ export default function VenteDetailPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Infos client */}
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <h2 className="font-semibold text-stone-700 mb-3 text-sm">Client</h2>
           <p className="font-medium text-stone-800 text-sm">{sale.customer?.full_name || sale.customer_name || 'Anonyme'}</p>
@@ -365,7 +352,6 @@ export default function VenteDetailPage() {
           )}
         </div>
 
-        {/* Articles */}
         <div className="lg:col-span-2 bg-white rounded-xl p-4 shadow-sm">
           <h2 className="font-semibold text-stone-700 mb-3 text-sm">Articles</h2>
           <div className="space-y-2 mb-4">
@@ -399,7 +385,6 @@ export default function VenteDetailPage() {
         </div>
       </div>
 
-      {/* Modal annulation */}
       {showCancelModal && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">
@@ -425,7 +410,6 @@ export default function VenteDetailPage() {
         </div>
       )}
 
-      {/* Modal modification 48h */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-2xl shadow-xl max-h-[92vh] overflow-y-auto">
@@ -433,14 +417,12 @@ export default function VenteDetailPage() {
               <h2 className="text-base font-semibold text-stone-800">Modifier la vente</h2>
               <button onClick={() => setShowEditModal(false)}><X size={18} className="text-stone-400" /></button>
             </div>
-
             <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
               <label className="block text-xs font-medium text-amber-700 mb-1">Motif de modification *</label>
               <input value={editReason} onChange={e => setEditReason(e.target.value)}
                 placeholder="Ex: Erreur produit, demande client..."
                 className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
             </div>
-
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div>
                 <label className="block text-xs text-stone-500 mb-1">Client</label>
@@ -484,8 +466,6 @@ export default function VenteDetailPage() {
                   className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400" />
               </div>
             </div>
-
-            {/* Articles */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold text-stone-700">Articles</h3>
@@ -538,7 +518,6 @@ export default function VenteDetailPage() {
                 <span>Nouveau total</span><span>{formatFCFA(editTotal)}</span>
               </div>
             </div>
-
             {error && <p className="text-red-500 text-xs mb-3 bg-red-50 p-2 rounded-lg">{error}</p>}
             <div className="flex gap-3">
               <button onClick={handleSaveEdit} disabled={saving}
@@ -554,7 +533,6 @@ export default function VenteDetailPage() {
         </div>
       )}
 
-      {/* Modal recu */}
       {showReceiptModal && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-md shadow-xl">

@@ -12,6 +12,16 @@ type PaymentMethod = { id: string; name: string }
 
 const SHOP_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
+async function adjustStock(supabase: any, variantId: string, delta: number) {
+  const { data: v } = await supabase.from('variants').select('stock_quantity, product_id').eq('id', variantId).single()
+  if (!v) return
+  const newQty = Math.max(0, v.stock_quantity + delta)
+  await supabase.from('variants').update({ stock_quantity: newQty }).eq('id', variantId)
+  const { data: pv } = await supabase.from('variants').select('stock_quantity').eq('product_id', v.product_id)
+  const total = (pv || []).reduce((s: number, x: any) => s + x.stock_quantity, 0)
+  await supabase.from('products').update({ stock: total }).eq('id', v.product_id)
+}
+
 export default function NouvelleVentePage() {
   const supabase = createClient()
   const router = useRouter()
@@ -134,45 +144,27 @@ export default function NouvelleVentePage() {
 
     if (saleError || !sale) { setError('Erreur lors de la creation'); setSaving(false); return }
 
-    // Insertion des articles — le trigger update_stock_on_sale gère le stock automatiquement
-    // MAIS seulement si le statut n'est pas draft
-    // Pour draft : on insère quand même les articles mais le trigger décrémentera
-    // Solution : si draft, on n'insère PAS les sale_items maintenant
-    // On les insère seulement si in_delivery ou paid
-    if (status === 'draft') {
-      // Pour draft : créer les sale_items sans déclencher le trigger de stock
-      // On utilise une approche différente — stocker dans une table temporaire ou
-      // accepter que le trigger décrémente même pour draft
-      // Pour l'instant : insérer normalement, le trigger gère
-      const { error: itemsError } = await supabase.from('sale_items').insert(
-        cart.map(item => ({
-          sale_id: sale.id, variant_id: item.variant_id, product_id: item.product_id,
-          product_name: item.product_name, variant_name: item.variant_name,
-          quantity: item.quantity, unit_price: item.unit_price, unit_cost: item.unit_cost,
-          total_price: item.unit_price * item.quantity,
-        }))
-      )
-      if (itemsError) {
-        setError("Erreur lors de l'ajout des articles")
-        await supabase.from('sales').delete().eq('id', sale.id)
-        setSaving(false)
-        return
-      }
-    } else {
-      // in_delivery ou paid : insérer les articles, le trigger décrémente automatiquement
-      const { error: itemsError } = await supabase.from('sale_items').insert(
-        cart.map(item => ({
-          sale_id: sale.id, variant_id: item.variant_id, product_id: item.product_id,
-          product_name: item.product_name, variant_name: item.variant_name,
-          quantity: item.quantity, unit_price: item.unit_price, unit_cost: item.unit_cost,
-          total_price: item.unit_price * item.quantity,
-        }))
-      )
-      if (itemsError) {
-        setError("Erreur lors de l'ajout des articles")
-        await supabase.from('sales').delete().eq('id', sale.id)
-        setSaving(false)
-        return
+    const { error: itemsError } = await supabase.from('sale_items').insert(
+      cart.map(item => ({
+        sale_id: sale.id, variant_id: item.variant_id, product_id: item.product_id,
+        product_name: item.product_name, variant_name: item.variant_name,
+        quantity: item.quantity, unit_price: item.unit_price, unit_cost: item.unit_cost,
+        total_price: item.unit_price * item.quantity,
+      }))
+    )
+
+    if (itemsError) {
+      setError("Erreur lors de l'ajout des articles")
+      await supabase.from('sales').delete().eq('id', sale.id)
+      setSaving(false)
+      return
+    }
+
+    // Décrémenter stock uniquement si in_delivery ou paid
+    // draft = bijou toujours en stock
+    if (status === 'in_delivery' || status === 'paid') {
+      for (const item of cart) {
+        await adjustStock(supabase, item.variant_id, -item.quantity)
       }
     }
 
