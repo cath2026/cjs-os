@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { Users, TrendingUp } from 'lucide-react'
+import { Target, TrendingUp, ShoppingCart, Globe } from 'lucide-react'
 
 type Employee = {
   id: string
@@ -15,7 +15,8 @@ type EmployeeStats = {
   employee: Employee
   revenue: number
   sales: number
-  goal?: number
+  orders: number
+  goal: number
   rate: number
 }
 
@@ -25,52 +26,96 @@ export default function EquipePage() {
   const supabase = createClient()
   const [stats, setStats] = useState<EmployeeStats[]>([])
   const [totalRevenue, setTotalRevenue] = useState(0)
-  const [totalGoal, setTotalGoal] = useState(0)
   const [totalSales, setTotalSales] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [editingGoal, setEditingGoal] = useState<{ id: string; name: string; goal: number } | null>(null)
+  const [goalInput, setGoalInput] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState('')
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
   const fetchData = async () => {
+    setLoading(true)
+
+    // Employees
     const { data: employees } = await supabase
       .from('employees')
       .select('*')
       .eq('shop_id', SHOP_ID)
       .eq('is_active', true)
 
+    if (!employees || employees.length === 0) { setLoading(false); return }
+
+    // Cycle actif
     const { data: cycle } = await supabase
       .from('finance_cycles')
-      .select('id, started_at')
+      .select('*')
       .eq('shop_id', SHOP_ID)
-      .eq('is_active', true)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
       .single()
 
-    if (!employees || !cycle) {
-      setLoading(false)
-      return
-    }
+    const startISO = cycle?.created_at
+      ? new Date(cycle.created_at).toISOString()
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
 
+    // Ventes boutique payées depuis début du cycle
     const { data: sales } = await supabase
       .from('sales')
-      .select('id, total, status, employee_id')
+      .select('id, total, employee_id, status')
       .eq('shop_id', SHOP_ID)
       .eq('status', 'paid')
-      .gte('created_at', cycle.started_at)
+      .gte('created_at', startISO)
 
+    // Commandes site livrées depuis début du cycle
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('id, total, auth_user_id, status')
+      .eq('shop_id', SHOP_ID)
+      .eq('status', 'livré')
+      .gte('created_at', startISO)
+
+    // Objectifs depuis performance_goals ou une colonne sur employees
     const { data: goals } = await supabase
       .from('performance_goals')
       .select('*')
-      .eq('cycle_id', cycle.id)
+      .eq('shop_id', SHOP_ID)
 
-    const employeeStats: EmployeeStats[] = employees.map(emp => {
+    // Relier orders aux employees via auth_user_id
+    const empWithAuth = await Promise.all(
+      employees.map(async (emp) => {
+        const { data: authData } = await supabase
+          .from('employees')
+          .select('auth_user_id')
+          .eq('id', emp.id)
+          .single()
+        return { ...emp, auth_user_id: authData?.auth_user_id }
+      })
+    )
+
+    const employeeStats: EmployeeStats[] = empWithAuth.map(emp => {
+      // Ventes boutique par cet employé
       const empSales = sales?.filter(s => s.employee_id === emp.id) || []
-      const revenue = empSales.reduce((sum, s) => sum + s.total, 0)
-      const goal = goals?.find(g => g.employee_id === emp.id)
-      const rate = goal?.target_revenue > 0 ? (revenue / goal.target_revenue) * 100 : 0
+      const salesRevenue = empSales.reduce((sum, s) => sum + (s.total || 0), 0)
+
+      // Commandes site par cet employé (via auth_user_id)
+      const empOrders = emp.auth_user_id
+        ? (orders?.filter(o => o.auth_user_id === emp.auth_user_id) || [])
+        : []
+      const ordersRevenue = empOrders.reduce((sum, o) => sum + (o.total || 0), 0)
+
+      const totalRevEmp = salesRevenue + ordersRevenue
+      const goal = goals?.find(g => g.employee_id === emp.id)?.target_revenue || 0
+      const rate = goal > 0 ? (totalRevEmp / goal) * 100 : 0
 
       return {
         employee: emp,
-        revenue,
+        revenue: totalRevEmp,
         sales: empSales.length,
-        goal: goal?.target_revenue,
+        orders: empOrders.length,
+        goal,
         rate,
       }
     })
@@ -78,111 +123,214 @@ export default function EquipePage() {
     employeeStats.sort((a, b) => b.revenue - a.revenue)
 
     const total = employeeStats.reduce((sum, s) => sum + s.revenue, 0)
-    const totalG = goals?.reduce((sum, g) => sum + g.target_revenue, 0) || 0
-    const totalS = sales?.length || 0
+    const totalS = (sales?.length || 0) + (orders?.length || 0)
 
     setStats(employeeStats)
     setTotalRevenue(total)
-    setTotalGoal(totalG)
     setTotalSales(totalS)
     setLoading(false)
   }
 
   useEffect(() => { fetchData() }, [])
 
+  const handleSaveGoal = async () => {
+    if (!editingGoal) return
+    setSaving(true)
+
+    // Upsert dans performance_goals
+    const { data: existing } = await supabase
+      .from('performance_goals')
+      .select('id')
+      .eq('employee_id', editingGoal.id)
+      .eq('shop_id', SHOP_ID)
+      .single()
+
+    if (existing) {
+      await supabase.from('performance_goals')
+        .update({ target_revenue: goalInput })
+        .eq('id', existing.id)
+    } else {
+      await supabase.from('performance_goals')
+        .insert({ shop_id: SHOP_ID, employee_id: editingGoal.id, target_revenue: goalInput })
+    }
+
+    setSaving(false)
+    setEditingGoal(null)
+    showToast('Objectif enregistre')
+    fetchData()
+  }
+
   const formatFCFA = (amount: number) =>
     new Intl.NumberFormat('fr-FR').format(Math.round(amount)) + ' FCFA'
 
+  const totalGoal = stats.reduce((sum, s) => sum + s.goal, 0)
   const globalRate = totalGoal > 0 ? (totalRevenue / totalGoal) * 100 : 0
 
-  if (loading) return <div className="p-6 text-stone-400">Chargement...</div>
+  if (loading) return <div className="p-6 text-stone-400 text-sm">Chargement...</div>
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-stone-800">Performance de l'Équipe</h1>
-        <p className="text-stone-500 text-sm">Vue d'ensemble et gestion des objectifs</p>
+    <div className="p-4 lg:p-6">
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold text-stone-800">Performance Equipe</h1>
+        <p className="text-stone-500 text-xs">Cycle actuel — boutique + site</p>
       </div>
 
-      {/* KPIs équipe */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <div className="bg-white rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-stone-400 mb-1">CA Total Équipe</p>
-          <p className="text-xl font-bold text-stone-800">{formatFCFA(totalRevenue)}</p>
+          <p className="text-xs text-stone-400 mb-1 flex items-center gap-1">
+            <TrendingUp size={11} /> CA Total Equipe
+          </p>
+          <p className="text-lg font-bold text-stone-800">{formatFCFA(totalRevenue)}</p>
         </div>
         <div className="bg-white rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-stone-400 mb-1">Objectif Total</p>
-          <p className="text-xl font-bold text-stone-800">{formatFCFA(totalGoal)}</p>
+          <p className="text-xs text-stone-400 mb-1 flex items-center gap-1">
+            <Target size={11} /> Objectif Total
+          </p>
+          <p className="text-lg font-bold text-stone-800">{totalGoal > 0 ? formatFCFA(totalGoal) : '—'}</p>
         </div>
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <p className="text-xs text-stone-400 mb-1">Taux Global</p>
-          <p className={`text-xl font-bold ${globalRate >= 100 ? 'text-green-600' : 'text-stone-800'}`}>
-            {globalRate.toFixed(1)}%
+          <p className={`text-lg font-bold ${globalRate >= 100 ? 'text-green-600' : 'text-stone-800'}`}>
+            {totalGoal > 0 ? globalRate.toFixed(1) + '%' : '—'}
           </p>
         </div>
         <div className="bg-white rounded-xl p-4 shadow-sm">
-          <p className="text-xs text-stone-400 mb-1">Ventes Totales</p>
-          <p className="text-xl font-bold text-stone-800">{totalSales}</p>
+          <p className="text-xs text-stone-400 mb-1 flex items-center gap-1">
+            <ShoppingCart size={11} /> Ventes Totales
+          </p>
+          <p className="text-lg font-bold text-stone-800">{totalSales}</p>
         </div>
       </div>
 
       {/* Barre progression globale */}
-      <div className="bg-white rounded-xl p-5 shadow-sm mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-medium text-stone-700">Progression globale de l'équipe</p>
-          <p className="text-sm font-bold text-stone-800">{globalRate.toFixed(1)}%</p>
+      {totalGoal > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-stone-700">Progression globale</p>
+            <p className="text-sm font-bold text-stone-800">{globalRate.toFixed(1)}%</p>
+          </div>
+          <div className="w-full bg-stone-100 rounded-full h-2.5">
+            <div
+              className={`h-2.5 rounded-full transition-all ${globalRate >= 100 ? 'bg-green-500' : 'bg-yellow-500'}`}
+              style={{ width: Math.min(globalRate, 100) + '%' }}
+            />
+          </div>
         </div>
-        <div className="w-full bg-stone-100 rounded-full h-3">
-          <div
-            className={`h-3 rounded-full transition-all ${globalRate >= 100 ? 'bg-green-500' : 'bg-yellow-500'}`}
-            style={{ width: `${Math.min(globalRate, 100)}%` }}
-          />
-        </div>
-      </div>
+      )}
 
       {/* Liste employés */}
-      <div className="bg-white rounded-xl shadow-sm">
-        <div className="px-5 py-4 border-b border-stone-100">
-          <h2 className="font-semibold text-stone-700">Performance individuelle</h2>
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-stone-100">
+          <h2 className="font-semibold text-stone-700 text-sm">Performance individuelle</h2>
         </div>
-        <div className="divide-y divide-stone-100">
-          {stats.map((stat, index) => (
-            <div key={stat.employee.id} className="flex items-center justify-between px-5 py-4">
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${
-                  index === 0 ? 'bg-yellow-500' :
-                  index === 1 ? 'bg-stone-400' :
-                  'bg-stone-300'
-                }`}>
-                  {stat.employee.full_name.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <p className="font-medium text-stone-800">{stat.employee.full_name}</p>
-                  <p className="text-xs text-stone-400">{stat.employee.email}</p>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-8">
-                <div className="text-right">
-                  <p className="font-bold text-stone-800">{formatFCFA(stat.revenue)}</p>
-                  <p className="text-xs text-stone-400">{stat.sales} ventes</p>
-                </div>
-                {stat.goal && (
-                  <div className="text-right w-32">
-                    <div className="w-full bg-stone-100 rounded-full h-2 mb-1">
-                      <div
-                        className={`h-2 rounded-full ${stat.rate >= 100 ? 'bg-green-500' : 'bg-yellow-500'}`}
-                        style={{ width: `${Math.min(stat.rate, 100)}%` }}
-                      />
+        {stats.length === 0 ? (
+          <div className="p-10 text-center text-stone-400 text-sm">Aucun employe actif</div>
+        ) : (
+          <div className="divide-y divide-stone-100">
+            {stats.map((stat, index) => (
+              <div key={stat.employee.id} className="px-5 py-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  {/* Identité */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${
+                      index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-stone-400' : 'bg-stone-300'
+                    }`}>
+                      {stat.employee.full_name.charAt(0).toUpperCase()}
                     </div>
-                    <p className="text-xs text-stone-400">{stat.rate.toFixed(1)}% de l'objectif</p>
+                    <div className="min-w-0">
+                      <p className="font-medium text-stone-800 text-sm truncate">{stat.employee.full_name}</p>
+                      <p className="text-xs text-stone-400 truncate">{stat.employee.email}</p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-xs text-stone-400 flex items-center gap-0.5">
+                          <ShoppingCart size={10} /> {stat.sales} boutique
+                        </span>
+                        <span className="text-xs text-stone-400 flex items-center gap-0.5">
+                          <Globe size={10} /> {stat.orders} site
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                )}
+
+                  {/* Stats */}
+                  <div className="flex items-center gap-4 flex-shrink-0 flex-wrap">
+                    <div className="text-right">
+                      <p className="font-bold text-stone-800 text-sm">{formatFCFA(stat.revenue)}</p>
+                      <p className="text-xs text-stone-400">{stat.sales + stat.orders} ventes total</p>
+                    </div>
+
+                    {/* Objectif + barre */}
+                    <div className="w-36">
+                      {stat.goal > 0 ? (
+                        <>
+                          <div className="flex justify-between text-xs text-stone-400 mb-1">
+                            <span>Obj: {formatFCFA(stat.goal)}</span>
+                            <span className={stat.rate >= 100 ? 'text-green-600 font-bold' : ''}>{stat.rate.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full bg-stone-100 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full ${stat.rate >= 100 ? 'bg-green-500' : 'bg-yellow-500'}`}
+                              style={{ width: Math.min(stat.rate, 100) + '%' }}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-stone-300 italic">Pas d&apos;objectif</p>
+                      )}
+                    </div>
+
+                    {/* Bouton définir objectif */}
+                    <button
+                      onClick={() => { setEditingGoal({ id: stat.employee.id, name: stat.employee.full_name, goal: stat.goal }); setGoalInput(stat.goal) }}
+                      className="text-xs text-yellow-600 border border-yellow-300 hover:bg-yellow-50 px-2.5 py-1.5 rounded-lg transition-colors flex-shrink-0"
+                    >
+                      <Target size={11} className="inline mr-1" />
+                      {stat.goal > 0 ? 'Modifier' : 'Objectif'}
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Modal objectif */}
+      {editingGoal && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm shadow-xl">
+            <h2 className="text-base font-semibold text-stone-800 mb-1">Objectif CA</h2>
+            <p className="text-xs text-stone-400 mb-4">{editingGoal.name}</p>
+            <label className="block text-xs text-stone-500 mb-1">Objectif mensuel (FCFA)</label>
+            <input
+              type="number"
+              value={goalInput || ''}
+              onChange={e => setGoalInput(Number(e.target.value))}
+              placeholder="Ex: 500000"
+              className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-4"
+            />
+            <div className="flex gap-3">
+              <button onClick={handleSaveGoal} disabled={saving}
+                className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+                {saving ? 'Enregistrement...' : 'Enregistrer'}
+              </button>
+              <button onClick={() => setEditingGoal(null)}
+                className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg text-sm">
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 bg-stone-800 text-white text-xs px-4 py-3 rounded-xl shadow-lg z-50 flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-green-400" />
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
