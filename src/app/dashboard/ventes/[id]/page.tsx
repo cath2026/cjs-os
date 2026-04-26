@@ -159,38 +159,59 @@ export default function VenteDetailPage() {
   const editTotal = editSubtotal - editDiscountAmount
 
   const handleSaveEdit = async () => {
-    if (!editReason.trim()) {
-      setError('Le motif de modification est obligatoire')
-      return
-    }
-    if (editCart.length === 0) {
-      setError('La vente doit contenir au moins un article')
-      return
-    }
+    if (!editReason.trim()) { setError('Le motif de modification est obligatoire'); return }
+    if (editCart.length === 0) { setError('La vente doit contenir au moins un article'); return }
     setSaving(true)
     setError('')
 
-    // Mettre à jour la vente
-    await supabase
-      .from('sales')
-      .update({
-        customer_name: editCustomerName || null,
-        acquisition_source: editSource || null,
-        payment_method: editPayment || null,
-        subtotal: editSubtotal,
-        discount_type: editDiscountType || null,
-        discount_value: editDiscountValue,
-        discount_amount: editDiscountAmount,
-        total: editTotal,
-        notes: `${editNotes ? editNotes + ' | ' : ''}MODIFIÉ — Motif: ${editReason}`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
+    // ÉTAPE 1 — Restaurer le stock des anciens articles
+    for (const oldItem of sale!.sale_items) {
+      if (oldItem.variant_id) {
+        const { data: v } = await supabase.from('variants').select('stock_quantity').eq('id', oldItem.variant_id).single()
+        if (v) {
+          const restoredQty = v.stock_quantity + oldItem.quantity
+          await supabase.from('variants').update({ stock_quantity: restoredQty }).eq('id', oldItem.variant_id)
+          // Mettre à jour stock produit
+          const { data: allV } = await supabase.from('variants').select('stock_quantity, product_id').eq('id', oldItem.variant_id).single()
+          if (allV) {
+            const { data: prodVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', allV.product_id)
+            const totalStock = (prodVariants || []).reduce((s, pv) => s + pv.stock_quantity, 0)
+            await supabase.from('products').update({ stock: totalStock }).eq('id', allV.product_id)
+          }
+        }
+      }
+    }
 
-    // Supprimer les anciens articles
+    // ÉTAPE 2 — Décrémenter le stock des nouveaux articles
+    for (const newItem of editCart) {
+      if (newItem.variant_id) {
+        const { data: v } = await supabase.from('variants').select('stock_quantity, product_id').eq('id', newItem.variant_id).single()
+        if (v) {
+          const newQty = Math.max(0, v.stock_quantity - newItem.quantity)
+          await supabase.from('variants').update({ stock_quantity: newQty }).eq('id', newItem.variant_id)
+          const { data: prodVariants } = await supabase.from('variants').select('stock_quantity').eq('product_id', v.product_id)
+          const totalStock = (prodVariants || []).reduce((s, pv) => s + pv.stock_quantity, 0)
+          await supabase.from('products').update({ stock: totalStock }).eq('id', v.product_id)
+        }
+      }
+    }
+
+    // ÉTAPE 3 — Mettre à jour la vente
+    await supabase.from('sales').update({
+      customer_name: editCustomerName || null,
+      acquisition_source: editSource || null,
+      payment_method: editPayment || null,
+      subtotal: editSubtotal,
+      discount_type: editDiscountType || null,
+      discount_value: editDiscountValue,
+      discount_amount: editDiscountAmount,
+      total: editTotal,
+      notes: `${editNotes ? editNotes + ' | ' : ''}MODIFIE — Motif: ${editReason}`,
+      updated_at: new Date().toISOString(),
+    }).eq('id', id)
+
+    // ÉTAPE 4 — Supprimer anciens articles et réinsérer nouveaux
     await supabase.from('sale_items').delete().eq('sale_id', id)
-
-    // Réinsérer les nouveaux articles
     await supabase.from('sale_items').insert(
       editCart.map(item => ({
         sale_id: id,
@@ -205,10 +226,10 @@ export default function VenteDetailPage() {
       }))
     )
 
-    // Log
+    // ÉTAPE 5 — Log
     await supabase.from('logs').insert({
       shop_id: SHOP_ID,
-      action: `Vente modifiée sous 48h — Motif: ${editReason}`,
+      action: `Vente modifiee sous 48h — Motif: ${editReason} — Stock corrige`,
       module: 'ventes',
       reference_id: id,
     })
