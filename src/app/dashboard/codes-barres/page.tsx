@@ -29,24 +29,12 @@ export default function CodesBarresPage() {
 
   const fetchBarcodes = async () => {
     setLoading(true)
-
-    // Charger depuis variants directement — source de vérité
     const { data: variants } = await supabase
       .from('variants')
       .select(`
-        id,
-        name,
-        sale_price,
-        barcode,
-        product_id,
-        products (
-          id,
-          name,
-          is_active,
-          categories (
-            name,
-            prefix
-          )
+        id, name, sale_price, barcode, product_id,
+        products ( id, name, is_active, price,
+          categories ( name, prefix )
         )
       `)
       .eq('shop_id', SHOP_ID)
@@ -73,6 +61,7 @@ export default function CodesBarresPage() {
 
   useEffect(() => { fetchBarcodes() }, [])
 
+  // Regénérer le barcode à chaque ouverture du modal
   useEffect(() => {
     if (showBarcode && svgRef.current) {
       try {
@@ -104,21 +93,16 @@ export default function CodesBarresPage() {
 
   const handleExportCSV = () => {
     const csv = [
-      ['Code-Barres', 'Produit', 'Variante', 'Catégorie', 'Prix'].join(','),
+      ['Code-Barres', 'Produit', 'Variante', 'Categorie', 'Prix'].join(','),
       ...filtered.map(b => [
-        b.barcode_value,
-        `"${b.product_name}"`,
-        `"${b.variant_name}"`,
-        b.category_code || '',
-        b.sale_price,
+        b.barcode_value, `"${b.product_name}"`, `"${b.variant_name}"`,
+        b.category_code || '', b.sale_price,
       ].join(','))
     ].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
-    a.download = `codes-barres-cjs.csv`
-    a.click()
+    a.href = url; a.download = 'codes-barres-cjs.csv'; a.click()
   }
 
   const handleDownloadPNG = () => {
@@ -140,6 +124,7 @@ export default function CodesBarresPage() {
     img.src = 'data:image/svg+xml;base64,' + btoa(svgData)
   }
 
+  // Impression avec prix visible
   const handlePrint = () => {
     if (!svgRef.current || !showBarcode) return
     const svg = svgRef.current.outerHTML
@@ -151,15 +136,19 @@ export default function CodesBarresPage() {
           <title>Code-Barres — ${showBarcode.product_name}</title>
           <style>
             body { font-family: sans-serif; text-align: center; padding: 20px; }
-            .label { margin-bottom: 8px; font-weight: bold; font-size: 14px; }
-            .sub { color: #666; font-size: 12px; margin-bottom: 12px; }
+            .product { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+            .variant { color: #666; font-size: 12px; margin-bottom: 4px; }
+            .price { font-size: 18px; font-weight: bold; color: #c9a84c; margin-bottom: 12px; }
+            .ref { color: #999; font-size: 10px; margin-top: 8px; font-family: monospace; }
             @media print { button { display: none; } }
           </style>
         </head>
         <body>
-          <div class="label">${showBarcode.product_name}</div>
-          <div class="sub">${showBarcode.variant_name} — ${showBarcode.barcode_value}</div>
+          <div class="product">${showBarcode.product_name}</div>
+          <div class="variant">${showBarcode.variant_name}</div>
+          <div class="price">${showBarcode.sale_price.toLocaleString('fr-FR')} XAF</div>
           ${svg}
+          <div class="ref">${showBarcode.barcode_value}</div>
           <script>window.onload = () => { window.print(); window.close(); }</script>
         </body>
       </html>
@@ -172,11 +161,10 @@ export default function CodesBarresPage() {
 
   return (
     <div className="p-4 lg:p-6">
-      {/* HEADER */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-semibold text-stone-800">Codes-Barres</h1>
-          <p className="text-stone-500 text-xs">{barcodes.length} codes générés · {filtered.length} affichés</p>
+          <p className="text-stone-500 text-xs">{barcodes.length} codes · {filtered.length} affiches</p>
         </div>
         <div className="flex gap-2">
           <button onClick={fetchBarcodes} className="p-2 border border-stone-200 text-stone-400 rounded-lg hover:bg-stone-50">
@@ -189,7 +177,6 @@ export default function CodesBarresPage() {
         </div>
       </div>
 
-      {/* RECHERCHE + FILTRE */}
       <div className="flex flex-col sm:flex-row gap-2 mb-4">
         <div className="flex-1 relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
@@ -199,12 +186,11 @@ export default function CodesBarresPage() {
         </div>
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
           className="border border-stone-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400">
-          <option value="">Toutes les catégories</option>
+          <option value="">Toutes les categories</option>
           {categories.map(c => <option key={c} value={c!}>{c}</option>)}
         </select>
       </div>
 
-      {/* TABLE */}
       {loading ? (
         <p className="text-stone-400 text-sm">Chargement...</p>
       ) : (
@@ -224,7 +210,7 @@ export default function CodesBarresPage() {
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="text-center py-12 text-stone-400 text-sm">
-                    {barcodes.length === 0 ? 'Aucun produit avec code-barres. Créez des produits depuis la page Produits.' : 'Aucun résultat'}
+                    {barcodes.length === 0 ? 'Aucun produit avec code-barres.' : 'Aucun resultat'}
                   </td>
                 </tr>
               ) : (
@@ -245,7 +231,7 @@ export default function CodesBarresPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs font-medium text-stone-700">{formatFCFA(barcode.sale_price)}</span>
+                      <span className="text-xs font-bold text-yellow-600">{formatFCFA(barcode.sale_price)}</span>
                     </td>
                     <td className="px-4 py-3">
                       <button onClick={() => setShowBarcode(barcode)}
@@ -261,7 +247,7 @@ export default function CodesBarresPage() {
         </div>
       )}
 
-      {/* MODAL BARCODE */}
+      {/* MODAL BARCODE AVEC PRIX */}
       {showBarcode && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
@@ -273,15 +259,18 @@ export default function CodesBarresPage() {
             </div>
 
             <div className="border border-stone-100 rounded-xl p-4 mb-4 text-center bg-stone-50">
-              <p className="font-bold text-stone-800 mb-0.5">{showBarcode.product_name}</p>
-              <p className="text-xs text-stone-400 mb-3">{showBarcode.variant_name}</p>
+              <p className="font-bold text-stone-800 text-sm mb-0.5">{showBarcode.product_name}</p>
+              <p className="text-xs text-stone-400 mb-1">{showBarcode.variant_name}</p>
+              {/* PRIX AFFICHÉ EN GRAS */}
+              <p className="text-xl font-bold text-yellow-600 mb-3">
+                {formatFCFA(showBarcode.sale_price)}
+              </p>
               <div className="flex justify-center bg-white rounded-lg p-3">
                 <svg ref={svgRef} />
               </div>
               <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-stone-400 space-y-0.5 text-left">
-                <p>Référence: <span className="font-mono text-stone-600">{showBarcode.barcode_value}</span></p>
-                <p>Catégorie: <span className="text-stone-600">{showBarcode.category_code || '—'}</span></p>
-                <p>Prix: <span className="text-stone-600 font-medium">{formatFCFA(showBarcode.sale_price)}</span></p>
+                <p>Reference: <span className="font-mono text-stone-600">{showBarcode.barcode_value}</span></p>
+                <p>Categorie: <span className="text-stone-600">{showBarcode.category_code || '—'}</span></p>
               </div>
             </div>
 
@@ -294,7 +283,7 @@ export default function CodesBarresPage() {
                 className="flex items-center justify-center gap-1 border border-yellow-300 hover:bg-yellow-50 text-yellow-700 py-2 rounded-lg text-xs font-medium">
                 <Download size={11} /> PNG
               </button>
-              <button onClick={() => { navigator.clipboard.writeText(showBarcode.barcode_value) }}
+              <button onClick={() => navigator.clipboard.writeText(showBarcode.barcode_value)}
                 className="bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg text-xs font-medium">
                 Copier
               </button>
